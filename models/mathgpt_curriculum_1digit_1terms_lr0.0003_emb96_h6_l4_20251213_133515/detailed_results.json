@@ -1,0 +1,329 @@
+{
+  "overall_accuracy": 0.725,
+  "operation_stats": {
+    "addition": {
+      "accuracy": 0.9,
+      "error_rate": 0.1,
+      "correct": 9,
+      "total": 10
+    },
+    "subtraction": {
+      "accuracy": 0.8,
+      "error_rate": 0.2,
+      "correct": 8,
+      "total": 10
+    },
+    "multiplication": {
+      "accuracy": 0.9,
+      "error_rate": 0.1,
+      "correct": 9,
+      "total": 10
+    },
+    "division": {
+      "accuracy": 0.3,
+      "error_rate": 0.7,
+      "correct": 3,
+      "total": 10
+    }
+  },
+  "operation_results": {
+    "addition": [
+      {
+        "expression": "1+2",
+        "generated": "3",
+        "generated_normalized": "3",
+        "correct": "3",
+        "is_correct": true
+      },
+      {
+        "expression": "5+3",
+        "generated": "8",
+        "generated_normalized": "8",
+        "correct": "8",
+        "is_correct": true
+      },
+      {
+        "expression": "9+1",
+        "generated": "10",
+        "generated_normalized": "10",
+        "correct": "10",
+        "is_correct": true
+      },
+      {
+        "expression": "2+7",
+        "generated": "9",
+        "generated_normalized": "9",
+        "correct": "9",
+        "is_correct": true
+      },
+      {
+        "expression": "3+8",
+        "generated": "11",
+        "generated_normalized": "11",
+        "correct": "11",
+        "is_correct": true
+      },
+      {
+        "expression": "6+2",
+        "generated": "8",
+        "generated_normalized": "8",
+        "correct": "8",
+        "is_correct": true
+      },
+      {
+        "expression": "8+1",
+        "generated": "9",
+        "generated_normalized": "9",
+        "correct": "9",
+        "is_correct": true
+      },
+      {
+        "expression": "4+5",
+        "generated": "10",
+        "generated_normalized": "10",
+        "correct": "9",
+        "is_correct": false
+      },
+      {
+        "expression": "7+3",
+        "generated": "10",
+        "generated_normalized": "10",
+        "correct": "10",
+        "is_correct": true
+      },
+      {
+        "expression": "5+4",
+        "generated": "9",
+        "generated_normalized": "9",
+        "correct": "9",
+        "is_correct": true
+      }
+    ],
+    "subtraction": [
+      {
+        "expression": "7-3",
+        "generated": "4",
+        "generated_normalized": "4",
+        "correct": "4",
+        "is_correct": true
+      },
+      {
+        "expression": "5-2",
+        "generated": "4",
+        "generated_normalized": "4",
+        "correct": "3",
+        "is_correct": false
+      },
+      {
+        "expression": "9-4",
+        "generated": "5",
+        "generated_normalized": "5",
+        "correct": "5",
+        "is_correct": true
+      },
+      {
+        "expression": "8-5",
+        "generated": "3",
+        "generated_normalized": "3",
+        "correct": "3",
+        "is_correct": true
+      },
+      {
+        "expression": "6-3",
+        "generated": "3",
+        "generated_normalized": "3",
+        "correct": "3",
+        "is_correct": true
+      },
+      {
+        "expression": "9-1",
+        "generated": "9",
+        "generated_normalized": "9",
+        "correct": "8",
+        "is_correct": false
+      },
+      {
+        "expression": "8-2",
+        "generated": "6",
+        "generated_normalized": "6",
+        "correct": "6",
+        "is_correct": true
+      },
+      {
+        "expression": "7-4",
+        "generated": "3",
+        "generated_normalized": "3",
+        "correct": "3",
+        "is_correct": true
+      },
+      {
+        "expression": "6-2",
+        "generated": "4",
+        "generated_normalized": "4",
+        "correct": "4",
+        "is_correct": true
+      },
+      {
+        "expression": "9-5",
+        "generated": "4",
+        "generated_normalized": "4",
+        "correct": "4",
+        "is_correct": true
+      }
+    ],
+    "multiplication": [
+      {
+        "expression": "3*4",
+        "generated": "12",
+        "generated_normalized": "12",
+        "correct": "12",
+        "is_correct": true
+      },
+      {
+        "expression": "5*2",
+        "generated": "10",
+        "generated_normalized": "10",
+        "correct": "10",
+        "is_correct": true
+      },
+      {
+        "expression": "2*8",
+        "generated": "16",
+        "generated_normalized": "16",
+        "correct": "16",
+        "is_correct": true
+      },
+      {
+        "expression": "6*3",
+        "generated": "18",
+        "generated_normalized": "18",
+        "correct": "18",
+        "is_correct": true
+      },
+      {
+        "expression": "4*3",
+        "generated": "12",
+        "generated_normalized": "12",
+        "correct": "12",
+        "is_correct": true
+      },
+      {
+        "expression": "7*2",
+        "generated": "14",
+        "generated_normalized": "14",
+        "correct": "14",
+        "is_correct": true
+      },
+      {
+        "expression": "4*5",
+        "generated": "26",
+        "generated_normalized": "26",
+        "correct": "20",
+        "is_correct": false
+      },
+      {
+        "expression": "8*2",
+        "generated": "16",
+        "generated_normalized": "16",
+        "correct": "16",
+        "is_correct": true
+      },
+      {
+        "expression": "9*1",
+        "generated": "9",
+        "generated_normalized": "9",
+        "correct": "9",
+        "is_correct": true
+      },
+      {
+        "expression": "3*5",
+        "generated": "15",
+        "generated_normalized": "15",
+        "correct": "15",
+        "is_correct": true
+      }
+    ],
+    "division": [
+      {
+        "expression": "8/2",
+        "generated": "8",
+        "generated_normalized": "8",
+        "correct": "4",
+        "is_correct": false
+      },
+      {
+        "expression": "9/3",
+        "generated": "18",
+        "generated_normalized": "18",
+        "correct": "3",
+        "is_correct": false
+      },
+      {
+        "expression": "6/2",
+        "generated": "6",
+        "generated_normalized": "6",
+        "correct": "3",
+        "is_correct": false
+      },
+      {
+        "expression": "8/4",
+        "generated": "21",
+        "generated_normalized": "21",
+        "correct": "2",
+        "is_correct": false
+      },
+      {
+        "expression": "6/3",
+        "generated": "9",
+        "generated_normalized": "9",
+        "correct": "2",
+        "is_correct": false
+      },
+      {
+        "expression": "9/1",
+        "generated": "9",
+        "generated_normalized": "9",
+        "correct": "9",
+        "is_correct": true
+      },
+      {
+        "expression": "4/2",
+        "generated": "5",
+        "generated_normalized": "5",
+        "correct": "2",
+        "is_correct": false
+      },
+      {
+        "expression": "8/1",
+        "generated": "8",
+        "generated_normalized": "8",
+        "correct": "8",
+        "is_correct": true
+      },
+      {
+        "expression": "6/1",
+        "generated": "5",
+        "generated_normalized": "5",
+        "correct": "6",
+        "is_correct": false
+      },
+      {
+        "expression": "4/1",
+        "generated": "4",
+        "generated_normalized": "4",
+        "correct": "4",
+        "is_correct": true
+      }
+    ]
+  },
+  "hyperparameters": {
+    "batch_size": 32,
+    "block_size": 12,
+    "learning_rate": 0.0003,
+    "n_embd": 96,
+    "n_head": 6,
+    "n_layer": 4,
+    "dropout": 0.1,
+    "vocab_size": 17
+  }
+}

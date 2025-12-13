@@ -1,0 +1,7 @@
+timestamp,vocab_size,n_embd,n_head,n_layer,block_size,learning_rate,batch_size,dropout,max_iters,best_val_loss,best_train_loss,overall_accuracy,addition_accuracy,subtraction_accuracy,multiplication_accuracy,division_accuracy,addition_error_rate,subtraction_error_rate,multiplication_error_rate,division_error_rate,model_parameters_M,training_time_min
+20251213_115402,17,96,6,4,28,0.0001,32,0.1,10000,tensor(0.6196),tensor(0.6249),0.075,0.2,0.1,0.0,0.0,0.8,0.9,1.0,1.0,0.452369,18.4232093612353
+timestamp,vocab_size,n_embd,n_head,n_layer,block_size,learning_rate,batch_size,dropout,max_iters,best_val_loss,best_train_loss,overall_accuracy,addition_accuracy,subtraction_accuracy,multiplication_accuracy,division_accuracy,addition_error_rate,subtraction_error_rate,multiplication_error_rate,division_error_rate,model_parameters_M,training_time_min
+20251213_115856,17,96,10,6,28,0.0001,32,0.1,10000,tensor(0.6182),tensor(0.6241),0.0,0.0,0.0,0.0,0.0,1.0,1.0,1.0,1.0,0.661649,31.121372028191885
+20251213_122627,17,64,6,4,28,0.0003,32,0.1,10000,tensor(0.5234),tensor(0.5346),0.125,0.5,0.0,0.0,0.0,0.5,1.0,1.0,1.0,0.199185,17.96195967197418
+20251213_123036,17,64,6,4,28,0.0003,32,0.1,10000,tensor(0.5497),tensor(0.5633),0.025,0.0,0.1,0.0,0.0,1.0,0.9,1.0,1.0,0.199185,17.679301961263022
+20251213_125326,17,84,6,4,28,0.0003,32,0.1,10000,tensor(0.5508),tensor(0.5546),0.0,0.0,0.0,0.0,0.0,1.0,1.0,1.0,1.0,0.347441,16.921860615412395

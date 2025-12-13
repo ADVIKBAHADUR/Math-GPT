@@ -1,0 +1,289 @@
+{
+  "overall_accuracy": 0.075,
+  "operation_stats": {
+    "addition": {
+      "accuracy": 0.2,
+      "error_rate": 0.8,
+      "correct": 2,
+      "total": 10
+    },
+    "subtraction": {
+      "accuracy": 0.1,
+      "error_rate": 0.9,
+      "correct": 1,
+      "total": 10
+    },
+    "multiplication": {
+      "accuracy": 0.0,
+      "error_rate": 1.0,
+      "correct": 0,
+      "total": 10
+    },
+    "division": {
+      "accuracy": 0.0,
+      "error_rate": 1.0,
+      "correct": 0,
+      "total": 10
+    }
+  },
+  "operation_results": {
+    "addition": [
+      {
+        "expression": "1+2",
+        "generated": "14.0",
+        "correct": "3.0",
+        "is_correct": false
+      },
+      {
+        "expression": "5+3",
+        "generated": "7.0",
+        "correct": "8.0",
+        "is_correct": false
+      },
+      {
+        "expression": "9+1",
+        "generated": "10.0",
+        "correct": "10.0",
+        "is_correct": true
+      },
+      {
+        "expression": "12+7",
+        "generated": "19.0",
+        "correct": "19.0",
+        "is_correct": true
+      },
+      {
+        "expression": "25+38",
+        "generated": "49.0",
+        "correct": "63.0",
+        "is_correct": false
+      },
+      {
+        "expression": "100+200",
+        "generated": "139.0",
+        "correct": "300.0",
+        "is_correct": false
+      },
+      {
+        "expression": "8+15",
+        "generated": "28.0",
+        "correct": "23.0",
+        "is_correct": false
+      },
+      {
+        "expression": "4+9",
+        "generated": "16.0",
+        "correct": "13.0",
+        "is_correct": false
+      },
+      {
+        "expression": "17+23",
+        "generated": "45.0",
+        "correct": "40.0",
+        "is_correct": false
+      },
+      {
+        "expression": "50+75",
+        "generated": "144.0",
+        "correct": "125.0",
+        "is_correct": false
+      }
+    ],
+    "subtraction": [
+      {
+        "expression": "7-8",
+        "generated": "10.0",
+        "correct": "-1.0",
+        "is_correct": false
+      },
+      {
+        "expression": "5-2",
+        "generated": "2.0",
+        "correct": "3.0",
+        "is_correct": false
+      },
+      {
+        "expression": "12-3",
+        "generated": "7.0",
+        "correct": "9.0",
+        "is_correct": false
+      },
+      {
+        "expression": "20-15",
+        "generated": "3.0",
+        "correct": "5.0",
+        "is_correct": false
+      },
+      {
+        "expression": "50-23",
+        "generated": "36.0",
+        "correct": "27.0",
+        "is_correct": false
+      },
+      {
+        "expression": "100-45",
+        "generated": "51.0",
+        "correct": "55.0",
+        "is_correct": false
+      },
+      {
+        "expression": "8-1",
+        "generated": "7.0",
+        "correct": "7.0",
+        "is_correct": true
+      },
+      {
+        "expression": "15-9",
+        "generated": "11.0",
+        "correct": "6.0",
+        "is_correct": false
+      },
+      {
+        "expression": "30-12",
+        "generated": "24.0",
+        "correct": "18.0",
+        "is_correct": false
+      },
+      {
+        "expression": "75-38",
+        "generated": "20.0",
+        "correct": "37.0",
+        "is_correct": false
+      }
+    ],
+    "multiplication": [
+      {
+        "expression": "3*4",
+        "generated": "36.0",
+        "correct": "12.0",
+        "is_correct": false
+      },
+      {
+        "expression": "5*7",
+        "generated": "12.0",
+        "correct": "35.0",
+        "is_correct": false
+      },
+      {
+        "expression": "2*8",
+        "generated": "42.0",
+        "correct": "16.0",
+        "is_correct": false
+      },
+      {
+        "expression": "6*9",
+        "generated": "13.0",
+        "correct": "54.0",
+        "is_correct": false
+      },
+      {
+        "expression": "12*3",
+        "generated": "-20.0",
+        "correct": "36.0",
+        "is_correct": false
+      },
+      {
+        "expression": "7*11",
+        "generated": "57.0",
+        "correct": "77.0",
+        "is_correct": false
+      },
+      {
+        "expression": "4*5",
+        "generated": "52.0",
+        "correct": "20.0",
+        "is_correct": false
+      },
+      {
+        "expression": "8*6",
+        "generated": "156.0",
+        "correct": "48.0",
+        "is_correct": false
+      },
+      {
+        "expression": "9*7",
+        "generated": "16.0",
+        "correct": "63.0",
+        "is_correct": false
+      },
+      {
+        "expression": "3*15",
+        "generated": "-2.0",
+        "correct": "45.0",
+        "is_correct": false
+      }
+    ],
+    "division": [
+      {
+        "expression": "5/6",
+        "generated": "130.0",
+        "correct": "0.8333",
+        "is_correct": false
+      },
+      {
+        "expression": "10/2",
+        "generated": "43.0",
+        "correct": "5.0",
+        "is_correct": false
+      },
+      {
+        "expression": "12/3",
+        "generated": "25.0",
+        "correct": "4.0",
+        "is_correct": false
+      },
+      {
+        "expression": "20/4",
+        "generated": "58.0",
+        "correct": "5.0",
+        "is_correct": false
+      },
+      {
+        "expression": "15/5",
+        "generated": "30.0",
+        "correct": "3.0",
+        "is_correct": false
+      },
+      {
+        "expression": "24/6",
+        "generated": "53.0",
+        "correct": "4.0",
+        "is_correct": false
+      },
+      {
+        "expression": "18/3",
+        "generated": "52.0",
+        "correct": "6.0",
+        "is_correct": false
+      },
+      {
+        "expression": "30/5",
+        "generated": "73.0",
+        "correct": "6.0",
+        "is_correct": false
+      },
+      {
+        "expression": "36/4",
+        "generated": "60.0",
+        "correct": "9.0",
+        "is_correct": false
+      },
+      {
+        "expression": "48/8",
+        "generated": "89.0",
+        "correct": "6.0",
+        "is_correct": false
+      }
+    ]
+  },
+  "hyperparameters": {
+    "batch_size": 32,
+    "block_size": 28,
+    "learning_rate": 0.0001,
+    "n_embd": 96,
+    "n_head": 6,
+    "n_layer": 4,
+    "dropout": 0.1,
+    "vocab_size": 17
+  }
+}

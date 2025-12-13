@@ -9,7 +9,7 @@ def generate_math_dataset(num_datapoints, max_terms, max_number):
     - max_terms: Maximum number of terms/numbers in expression
     - max_number: Maximum value for numbers (e.g., 99 for two-digit)
     """
-    operators = ['+', '-', '*', '/']
+    operators = ['-']
     dataset = []
     failed = 0
     for i in range(num_datapoints):
