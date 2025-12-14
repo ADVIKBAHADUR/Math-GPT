@@ -6,6 +6,52 @@ import torch
 import random
 
 
+# Reciprocal lookup table (1/1 to 1/100 with 1 decimal place)
+RECIPROCAL_TABLE = {i: round(1.0 / i, 1) for i in range(1, 101)}
+
+
+def generate_reciprocal_expression(n):
+    """Generate a reciprocal expression: 1/n=result (1 decimal place)"""
+    if n < 1 or n > 100:
+        n = random.randint(1, 100)
+    result = RECIPROCAL_TABLE[n]
+    return f"1/{n}={result:.1f}"
+
+
+def generate_reciprocal_dataset(count=100):
+    """Generate dataset of reciprocals from 1/1 to 1/100"""
+    expressions = []
+    # Cover all reciprocals 1-100
+    for i in range(1, 101):
+        expressions.append(generate_reciprocal_expression(i))
+    # Add extra samples for commonly needed reciprocals
+    common_divisors = [2, 3, 4, 5, 6, 7, 8, 9, 10]
+    for _ in range(count - 100):
+        n = random.choice(common_divisors)
+        expressions.append(generate_reciprocal_expression(n))
+    return expressions
+
+
+def convert_division_to_multiplication(expression):
+    """
+    Convert division expression to multiplication with reciprocal.
+    Example: '8/4' becomes '8*0.2' (since 1/4 = 0.25 ≈ 0.2 at 1 decimal)
+    """
+    # Handle simple division (e.g., '8/4')
+    if '/' in expression and expression.count('/') == 1:
+        parts = expression.split('/')
+        if len(parts) == 2:
+            try:
+                numerator = parts[0].strip()
+                denominator = int(parts[1].strip())
+                if 1 <= denominator <= 100:
+                    reciprocal = RECIPROCAL_TABLE[denominator]
+                    return f"{numerator}*{reciprocal:.1f}"
+            except:
+                pass
+    return expression
+
+
 def prepare_math_data():
     """Prepare vocabulary for math expressions"""
     required_chars = set('0123456789+-*/=.\n')
@@ -35,7 +81,7 @@ def safe_decode(l, itos):
     return ''.join(result)
 
 
-def generate_random_expression(num_digits=1, max_terms=3, max_value=10, operators=['+']):
+def generate_random_expression(num_digits=1, max_terms=3, max_value=10, operators=['+'], use_reciprocal_for_division=False):
     """Generate a random math expression on-the-fly with proper decimal handling for division"""
     num_terms = random.randint(2, max_terms)
     
@@ -56,9 +102,9 @@ def generate_random_expression(num_digits=1, max_terms=3, max_value=10, operator
         # For division, avoid zero and very small divisors
         if op == '/':
             if num_digits == 1:
-                num = random.randint(2, actual_max)
+                num = random.randint(2, min(actual_max, 100))  # Cap at 100 for reciprocal table
             else:
-                num = random.randint(max(2, 10**(num_digits-1)), actual_max)
+                num = random.randint(max(2, 10**(num_digits-1)), min(actual_max, 100))
         else:
             if num_digits == 1:
                 num = random.randint(0, actual_max)
@@ -66,6 +112,10 @@ def generate_random_expression(num_digits=1, max_terms=3, max_value=10, operator
                 num = random.randint(10**(num_digits-1), actual_max)
         
         expression += op + str(num)
+    
+    # Convert division to multiplication with reciprocal if requested
+    if use_reciprocal_for_division and '/' in expression:
+        expression = convert_division_to_multiplication(expression)
     
     # Calculate answer with 1 decimal place precision
     try:
@@ -77,7 +127,7 @@ def generate_random_expression(num_digits=1, max_terms=3, max_value=10, operator
                 
     except (ZeroDivisionError, ValueError, SyntaxError):
         # If evaluation fails, generate a simpler expression
-        return generate_random_expression(num_digits, 2, max_value, ['+'])
+        return generate_random_expression(num_digits, 2, max_value, ['+'], use_reciprocal_for_division)
     
     return f"{expression}={answer_str}"
 
@@ -160,12 +210,25 @@ def generate_test_expressions(num_digits=1, count=10):
 
 def create_curriculum_stages(num_digits_list=[1, 2]):
     """
-    Create curriculum stages - DIVISION-FIRST strategy with EASY warm-up
-    Start with easy divisions, then regular divisions, then add other operations
+    Create curriculum stages - RECIPROCAL-BASED DIVISION strategy
+    Stage 0: Learn all reciprocals (1/1 to 1/100)
+    Later stages: Convert divisions to multiplications with reciprocals
     """
     stages = []
     
-    # PHASE 1: Single-digit operations (hardest to easiest)
+    # STAGE 0: Learn reciprocals first (Foundation)
+    stages.append({
+        'name': '0_Reciprocals',
+        'operators': ['reciprocal'],  # Special marker
+        'num_digits': 1,
+        'max_value': 100,
+        'max_terms': 2,
+        'accuracy_threshold': 0.95,
+        'description': 'Learn all reciprocals: 1/n for n=1 to 100 (1 decimal place)',
+        'is_reciprocal_stage': True
+    })
+    
+    # PHASE 1: Single-digit operations (now using reciprocals for division)
     stages.append({
         'name': '1_Division_1digit',
         'operators': ['/'],
@@ -173,7 +236,8 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'max_value': 9,
         'max_terms': 2,
         'accuracy_threshold': 0.90,
-        'description': 'Master division with decimals (e.g., 8/3=2.6667)'
+        'description': 'Division as multiplication with reciprocals (e.g., 8/4 → 8*0.2)',
+        'use_reciprocal_for_division': True
     })
     
     stages.append({
@@ -213,7 +277,8 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'max_value': 9,
         'max_terms': 2,
         'accuracy_threshold': 0.88,
-        'description': 'Combine multiplication and division'
+        'description': 'Combine multiplication and division',
+        'use_reciprocal_for_division': True
     })
     
     stages.append({
@@ -233,7 +298,8 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'max_value': 9,
         'max_terms': 3,
         'accuracy_threshold': 0.85,
-        'description': 'All operations mixed (1-digit)'
+        'description': 'All operations mixed (1-digit)',
+        'use_reciprocal_for_division': True
     })
     
     # PHASE 2: Two-digit operations (same progression)
@@ -244,7 +310,8 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'max_value': 99,
         'max_terms': 2,
         'accuracy_threshold': 0.85,
-        'description': 'Two-digit division (e.g., 84/7=12.0)'
+        'description': 'Two-digit division (e.g., 84/7 → 84*0.1)',
+        'use_reciprocal_for_division': True
     })
     
     stages.append({
@@ -284,7 +351,8 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'max_value': 99,
         'max_terms': 3,
         'accuracy_threshold': 0.80,
-        'description': 'All operations mixed (2-digit)'
+        'description': 'All operations mixed (2-digit)',
+        'use_reciprocal_for_division': True
     })
     
     return stages
@@ -298,12 +366,20 @@ def get_batch(split, batch_size, block_size, curriculum_config, val_expressions,
     
     for i in range(batch_size):
         if split == 'train':
-            expression_str = generate_random_expression(
-                num_digits=curriculum_config['num_digits'],
-                max_terms=curriculum_config['max_terms'],
-                max_value=curriculum_config['max_value'],
-                operators=curriculum_config['operators']
-            )
+            # Check if this is the reciprocal stage
+            if curriculum_config.get('is_reciprocal_stage', False):
+                # Generate reciprocal expressions
+                n = random.randint(1, 100)
+                expression_str = generate_reciprocal_expression(n)
+            else:
+                use_reciprocal = curriculum_config.get('use_reciprocal_for_division', False)
+                expression_str = generate_random_expression(
+                    num_digits=curriculum_config['num_digits'],
+                    max_terms=curriculum_config['max_terms'],
+                    max_value=curriculum_config['max_value'],
+                    operators=curriculum_config['operators'],
+                    use_reciprocal_for_division=use_reciprocal
+                )
         else:  # split == 'val'
             expr_idx = random.randint(0, len(val_expressions) - 1)
             expression_str = val_expressions[expr_idx]
@@ -367,24 +443,29 @@ def update_validation_set(curriculum_config, val_set_size):
     print(f"Operators: {curriculum_config['operators']}, Digits: {curriculum_config['num_digits']}")
     print(f"Max Terms: {curriculum_config['max_terms']}, Max Value: {curriculum_config['max_value']}")
     
-    # Check if we should use easy division
-    use_easy = curriculum_config.get('use_easy_division', False)
-    if use_easy:
-        print(f"Mode: EASY DIVISION (clean decimals only)")
+    # Check if this is reciprocal stage
+    is_reciprocal = curriculum_config.get('is_reciprocal_stage', False)
+    use_reciprocal = curriculum_config.get('use_reciprocal_for_division', False)
+    
+    if is_reciprocal:
+        print(f"Mode: RECIPROCAL LEARNING (1/1 to 1/100)")
+    elif use_reciprocal:
+        print(f"Mode: DIVISION AS MULTIPLICATION (using reciprocals)")
     
     print(f"\nFirst 10 validation expressions:")
     
     for i in range(val_set_size):
-        if use_easy:
-            expr = generate_easy_division_expression(
-                num_digits=curriculum_config['num_digits']
-            )
+        if is_reciprocal:
+            # Generate reciprocals
+            n = random.randint(1, 100)
+            expr = generate_reciprocal_expression(n)
         else:
             expr = generate_random_expression(
                 num_digits=curriculum_config['num_digits'],
                 max_terms=curriculum_config['max_terms'],
                 max_value=curriculum_config['max_value'],
-                operators=curriculum_config['operators']
+                operators=curriculum_config['operators'],
+                use_reciprocal_for_division=use_reciprocal
             )
         val_expressions.append(expr)
         

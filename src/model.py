@@ -216,16 +216,8 @@ class GPTLanguageModel(nn.Module):
         # Get digit token IDs for abacus embeddings
         digit_tokens = [stoi[str(i)] for i in range(10)]
         
-        # THREE positional encoding types
-        self.learned_encoder = LearnedPositionalEncoding(n_embd, block_size)
-        self.sinusoidal_encoder = SinusoidalPositionalEncoding(n_embd, block_size)
+        # Use only Abacus embeddings (best for arithmetic)
         self.abacus_encoder = AbacusEmbedding(n_embd, block_size, digit_tokens, max_k=99)
-        
-        # Learnable weights for combining the three encodings
-        # Initialize to equal weights (1/3 each after softmax)
-        self.weight_learned = nn.Parameter(torch.ones(1))
-        self.weight_sinusoidal = nn.Parameter(torch.ones(1))
-        self.weight_abacus = nn.Parameter(torch.ones(1))
         
         # Transformer blocks
         self.blocks = nn.Sequential(*[Block(n_embd, n_head, block_size, dropout) for _ in range(n_layer)])
@@ -255,22 +247,8 @@ class GPTLanguageModel(nn.Module):
         # Token embeddings
         tok_emb = self.token_embedding_table(idx) # (B,T,C)
         
-        # Get all three positional encodings
-        learned_pos = self.learned_encoder(idx)      # (B, T, C)
-        sinusoidal_pos = self.sinusoidal_encoder(idx)  # (B, T, C)
-        abacus_pos = self.abacus_encoder(idx)        # (B, T, C)
-        
-        # Compute softmax weights (ensures they sum to 1)
-        weights = F.softmax(torch.stack([
-            self.weight_learned, 
-            self.weight_sinusoidal, 
-            self.weight_abacus
-        ]), dim=0)
-        
-        # Weighted combination of all three positional encodings
-        pos_emb = (weights[0] * learned_pos + 
-                   weights[1] * sinusoidal_pos + 
-                   weights[2] * abacus_pos)
+        # Abacus positional encoding (optimized for arithmetic)
+        pos_emb = self.abacus_encoder(idx)  # (B, T, C)
         
         x = tok_emb + pos_emb # (B,T,C)
         
@@ -307,124 +285,20 @@ class GPTLanguageModel(nn.Module):
             
             B, T, C = logits.shape
             
-            # HYBRID LOSS: Full-number differentiable MSE + Cross-Entropy
-            # Computes soft numerical value for entire answer, not digit-by-digit
+            # Standard cross-entropy loss
+            ce_loss = F.cross_entropy(logits.view(B*T, C), targets.view(B*T), reduction='none').view(B, T)
             
-            B, T, C = logits.shape
-            
-            # Standard cross-entropy component (for general token learning)
-            ce_loss = F.cross_entropy(
-                logits.view(B*T, C),
-                targets.view(B*T),
-                reduction='none'
-            ).view(B, T)
-            
-            # INVALID TOKEN PENALTY: Heavily penalize non-numeric tokens in answers
-            valid_answer_tokens = set([self.stoi[str(i)] for i in range(10)] + 
-                                     [self.stoi['.'], self.stoi['\n']])
-            invalid_token_penalty = torch.zeros(B, T, device=self.device)
-            
-            # Digit token setup for soft numerical computation
-            digit_tokens = [self.stoi[str(i)] for i in range(10)]
-            digit_values = torch.tensor([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], 
-                                       dtype=torch.float32, device=self.device)
-            
+            # Weight answer tokens more heavily
             weights = torch.ones(B, T, device=self.device)
-            numerical_mse_loss = torch.tensor(0.0, device=self.device)
-            valid_samples = 0
-            
             for b in range(B):
-                target_seq = targets[b].cpu().tolist()
-                
-                # Find '=' position
-                if self.stoi['='] not in target_seq:
-                    continue
-                    
-                eq_pos = target_seq.index(self.stoi['='])
-                
-                # Check for invalid tokens in answer portion
-                for t in range(eq_pos + 1, T):
-                    token = target_seq[t]
-                    if token not in valid_answer_tokens:
-                        # HUGE penalty for invalid tokens like +, -, *, /
-                        invalid_token_penalty[b, t] = 100.0
-                
-                # Find decimal point position (if exists)
-                decimal_pos = None
-                for t in range(eq_pos + 1, T):
-                    if target_seq[t] in self.itos and self.itos[target_seq[t]] == '.':
-                        decimal_pos = t
-                        break
-                
-                # Build SOFT predicted number and TRUE target number
-                soft_pred_value = torch.tensor(0.0, device=self.device)
-                true_value = 0.0
-                
-                # Parse digits to build full number
-                digits_before_decimal = []
-                digits_after_decimal = []
-                
-                for t in range(eq_pos + 1, T):
-                    token = target_seq[t]
-                    if token == self.stoi.get('\n', -1):
-                        break
-                    
-                    if token in self.itos and self.itos[token] in '0123456789':
-                        # Get soft predicted digit value (differentiable!)
-                        probs = F.softmax(logits[b, t], dim=-1)
-                        digit_probs = probs[digit_tokens]
-                        soft_digit = (digit_probs * digit_values).sum()
-                        
-                        # Get true digit value
-                        true_digit = float(self.itos[token])
-                        
-                        if decimal_pos is None or t < decimal_pos:
-                            # Before decimal point
-                            digits_before_decimal.append((soft_digit, true_digit))
-                        else:
-                            # After decimal point
-                            digits_after_decimal.append((soft_digit, true_digit))
-                
-                # Compute full number value with place values
-                # Before decimal: reverse order (rightmost = ones, next = tens, etc.)
-                for i, (soft_d, true_d) in enumerate(reversed(digits_before_decimal)):
-                    place_value = 10 ** i  # 1, 10, 100, ...
-                    soft_pred_value = soft_pred_value + soft_d * place_value
-                    true_value += true_d * place_value
-                
-                # After decimal: forward order (first = tenths, second = hundredths, etc.)
-                for i, (soft_d, true_d) in enumerate(digits_after_decimal):
-                    place_value = 10 ** (-(i + 1))  # 0.1, 0.01, 0.001, ...
-                    soft_pred_value = soft_pred_value + soft_d * place_value
-                    true_value += true_d * place_value
-                
-                # MSE on full numerical value (e.g., 9.0 vs 7.999 = ~1.0 difference)
-                if len(digits_before_decimal) > 0 or len(digits_after_decimal) > 0:
-                    numerical_mse_loss = numerical_mse_loss + (soft_pred_value - true_value) ** 2
-                    valid_samples += 1
-                
-                # Also apply position weights for CE
-                for t in range(eq_pos + 1, T):
-                    token = target_seq[t]
-                    if token in self.itos:
-                        if self.itos[token] in '0123456789':
-                            if decimal_pos is None or t < decimal_pos:
-                                weights[b, t] = 10.0  # Before decimal
-                            else:
-                                weights[b, t] = 3.0   # After decimal
-                        elif self.itos[token] == '.':
-                            weights[b, t] = 5.0
+                target_seq = targets[b].tolist()
+                if self.stoi['='] in target_seq:
+                    eq_pos = target_seq.index(self.stoi['='])
+                    # Increase weight for answer portion (after '=')
+                    weights[b, eq_pos+1:] = 3.0
             
-            # Average MSE over valid samples
-            if valid_samples > 0:
-                numerical_mse_loss = numerical_mse_loss / valid_samples
-            
-            # Combine: weighted CE + numerical MSE + invalid token penalty
-            weighted_ce = (ce_loss * weights).mean()
-            invalid_penalty = invalid_token_penalty.mean()
-            total_loss = weighted_ce + numerical_mse_loss * 50.0 + invalid_penalty
-            
-            loss = total_loss
+            # Weighted cross-entropy
+            loss = (ce_loss * weights).mean()
 
         return logits, loss
 

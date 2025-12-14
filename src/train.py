@@ -15,22 +15,23 @@ import random
 from model import GPTLanguageModel
 from data import (
     prepare_math_data, safe_encode, safe_decode, generate_test_expressions,
-    create_curriculum_stages, get_batch, update_validation_set
+    create_curriculum_stages, get_batch, update_validation_set,
+    convert_division_to_multiplication
 )
 
 
 # hyperparameters - tuned for math expressions
-batch_size = 64
+batch_size = 32
 block_size = 28
 max_iters = 100000
-eval_interval = 50
-learning_rate = 2e-4
+eval_interval = 200  # Reduced frequency for faster training
+learning_rate = 5e-4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(device)
-eval_iters = 100
-n_embd = 120
-n_head = 10
-n_layer = 6
+eval_iters = 20  # Reduced from 100 for faster training
+n_embd = 96
+n_head = 6
+n_layer = 4
 dropout = 0.2
 
 torch.manual_seed(1337)
@@ -59,14 +60,16 @@ curriculum_config = {
     'max_value': curriculum_stages[0]['max_value'],
     'operators': curriculum_stages[0]['operators'],
     'accuracy_threshold': curriculum_stages[0].get('accuracy_threshold', 0.95),
+    'is_reciprocal_stage': curriculum_stages[0].get('is_reciprocal_stage', False),
+    'use_reciprocal_for_division': curriculum_stages[0].get('use_reciprocal_for_division', False),
 }
 
 current_stage = 0
 
 print(f"\n{'='*70}")
-print(f"DIVISION-FIRST CURRICULUM LEARNING SETUP")
+print(f"RECIPROCAL-BASED DIVISION CURRICULUM LEARNING SETUP")
 print(f"{'='*70}")
-print(f"Strategy: Master hardest operation first, then add easier ones")
+print(f"Strategy: Learn reciprocals first, then convert divisions to multiplications")
 print(f"Total stages: {len(curriculum_stages)}\n")
 for i, stage in enumerate(curriculum_stages):
     desc = stage.get('description', '')
@@ -83,7 +86,7 @@ print(f"Validation set ready for stage: {curriculum_stages[current_stage]['name'
 
 # TensorBoard setup
 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-run_name = f'division_first_curriculum_lr{learning_rate}_emb{n_embd}_h{n_head}_l{n_layer}_{timestamp}'
+run_name = f'reciprocal_curriculum_lr{learning_rate}_emb{n_embd}_h{n_head}_l{n_layer}_{timestamp}'
 log_dir = f'runs/tensorboard/{run_name}'
 writer = SummaryWriter(log_dir)
 
@@ -126,6 +129,64 @@ def evaluate_math_accuracy(model, current_stage):
     current_num_digits = curriculum_stages[current_stage]['num_digits']
     stage_config = curriculum_stages[current_stage]
     
+    # Special handling for reciprocal stage
+    if stage_config.get('is_reciprocal_stage', False):
+        # Test on reciprocals 1/1 to 1/100
+        operation_results = {'reciprocals': []}
+        correct = 0
+        total = 100
+        
+        for n in range(1, 101):
+            reciprocal_val = round(1.0 / n, 1)
+            expr = f"1/{n}"
+            try:
+                generated = model.generate_math_answer(expr, encode, decode, itos)
+                if '=' in generated:
+                    generated_answer = generated.split('=')[1].strip().replace('\n', '')
+                    correct_answer = f"{reciprocal_val:.1f}"
+                    generated_normalized = normalize_answer(generated_answer)
+                    correct_normalized = normalize_answer(correct_answer)
+                    is_correct = generated_normalized == correct_normalized
+                    
+                    if is_correct:
+                        correct += 1
+                    operation_results['reciprocals'].append({
+                        'expression': expr,
+                        'generated': generated_answer,
+                        'generated_normalized': generated_normalized,
+                        'correct': correct_normalized,
+                        'is_correct': is_correct
+                    })
+                else:
+                    operation_results['reciprocals'].append({
+                        'expression': expr,
+                        'generated': 'MALFORMED',
+                        'generated_normalized': 'MALFORMED',
+                        'correct': f"{reciprocal_val:.1f}",
+                        'is_correct': False
+                    })
+            except Exception as e:
+                operation_results['reciprocals'].append({
+                    'expression': expr,
+                    'generated': 'ERROR',
+                    'generated_normalized': 'ERROR',
+                    'correct': f"{reciprocal_val:.1f}",
+                    'is_correct': False,
+                    'error': str(e)
+                })
+        
+        accuracy = correct / total if total > 0 else 0
+        operation_stats = {
+            'reciprocals': {
+                'accuracy': accuracy,
+                'error_rate': (total - correct) / total if total > 0 else 0,
+                'correct': correct,
+                'total': total
+            }
+        }
+        model.train()
+        return accuracy, operation_stats, operation_results
+    
     # Generate test expressions based on current stage configuration
     if current_num_digits == 1:
         test_expressions = test_expressions_1digit
@@ -158,6 +219,9 @@ def evaluate_math_accuracy(model, current_stage):
     all_correct = 0
     all_total = 0
     
+    # Check if we should convert divisions to multiplications
+    use_reciprocal = stage_config.get('use_reciprocal_for_division', False)
+    
     for category in test_categories:
         expressions = test_expressions.get(category, [])
         if not expressions:
@@ -169,7 +233,12 @@ def evaluate_math_accuracy(model, current_stage):
         
         for expr in expressions:
             try:
-                generated = model.generate_math_answer(expr, encode, decode, itos)
+                # Convert division to multiplication if needed
+                test_expr = expr
+                if use_reciprocal and '/' in expr:
+                    test_expr = convert_division_to_multiplication(expr)
+                
+                generated = model.generate_math_answer(test_expr, encode, decode, itos)
                 if '=' in generated:
                     generated_answer = generated.split('=')[1].strip().replace('\n', '')
                     correct_val = eval(expr)
@@ -373,19 +442,6 @@ def main():
             losses = estimate_loss(model)
             math_accuracy, operation_stats, operation_results = evaluate_math_accuracy(model, current_stage)
             
-            # Log positional encoding weights (learned combination)
-            with torch.no_grad():
-                weights = F.softmax(torch.stack([
-                    model.weight_learned, 
-                    model.weight_sinusoidal, 
-                    model.weight_abacus
-                ]), dim=0)
-                writer.add_scalars('Positional_Encoding_Weights', {
-                    'Learned': weights[0].item(),
-                    'Sinusoidal': weights[1].item(),
-                    'Abacus': weights[2].item()
-                }, iter)
-            
             # Log metrics to TensorBoard
             writer.add_scalars('Loss_Comparison', {
                 'Train': losses['train'],
@@ -480,18 +536,6 @@ def main():
             
             # Show sample predictions every 500 steps for debugging
             if iter % 500 == 0 and iter > 0:
-                # Show positional encoding weights
-                with torch.no_grad():
-                    weights = F.softmax(torch.stack([
-                        model.weight_learned, 
-                        model.weight_sinusoidal, 
-                        model.weight_abacus
-                    ]), dim=0)
-                    print(f"\n  ⚖️  Positional Encoding Weights:")
-                    print(f"      Learned:     {weights[0].item():.3f} ({weights[0].item()*100:.1f}%)")
-                    print(f"      Sinusoidal:  {weights[1].item():.3f} ({weights[1].item()*100:.1f}%)")
-                    print(f"      Abacus:      {weights[2].item():.3f} ({weights[2].item()*100:.1f}%)")
-                
                 print(f"\n  📝 Sample predictions for Stage '{stage_name}':")
                 for category, results in operation_results.items():
                     if results:
@@ -546,6 +590,8 @@ def main():
                 curriculum_config['max_value'] = next_stage_info['max_value']
                 curriculum_config['max_terms'] = next_stage_info.get('max_terms', 3)
                 curriculum_config['accuracy_threshold'] = next_stage_info.get('accuracy_threshold', 0.95)
+                curriculum_config['is_reciprocal_stage'] = next_stage_info.get('is_reciprocal_stage', False)
+                curriculum_config['use_reciprocal_for_division'] = next_stage_info.get('use_reciprocal_for_division', False)
                 print(f"   Moving to Stage {current_stage+1}: {next_stage_info['name']}")
                 print(f"   New operators: {curriculum_config['operators']}")
                 print(f"   Digit complexity: {curriculum_config['num_digits']}-digit")
@@ -614,23 +660,9 @@ Time saved: {max_iters - iter} iterations not needed""", iter)
                           val_expressions, encode, vocab_size, device)
         logits, loss = model(xb, yb)
         
-        if iter % 50 == 0:
+        # Reduced logging frequency for better performance
+        if iter % eval_interval == 0:
             writer.add_scalar('Loss/Training_Step', loss.item(), iter)
-        
-        if iter % 100 == 0:
-            total_norm = 0
-            for p in model.parameters():
-                if p.grad is not None:
-                    param_norm = p.grad.data.norm(2)
-                    total_norm += param_norm.item() ** 2
-            total_norm = total_norm ** (1. / 2)
-            
-            writer.add_scalars('Loss_Detailed', {
-                'Training_Step': loss.item(),
-                'Current_Validation': losses['val'] if iter % eval_interval == 0 else None
-            }, iter)
-            
-            writer.add_scalar('Gradients/Total_Norm', total_norm, iter)
         
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
