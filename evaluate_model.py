@@ -278,7 +278,7 @@ def main():
     print("=== MathGPT Model Evaluator ===")
     
     # Find available models
-    model_dirs = glob.glob("models/mathgpt_*")
+    model_dirs = glob.glob("runs/models/divi*")
     if not model_dirs:
         print("No models found in 'models/' directory!")
         return

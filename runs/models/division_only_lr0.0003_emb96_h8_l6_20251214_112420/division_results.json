@@ -1,0 +1,220 @@
+{
+  "accuracy": 0.9,
+  "correct": 27,
+  "total": 30,
+  "target_accuracy": 0.9,
+  "iterations": 1650,
+  "training_time_min": 4.533642788728078,
+  "results": [
+    {
+      "expression": "62/31/8/7",
+      "generated": "0.0304",
+      "generated_normalized": "0.0304",
+      "correct": "0.0357",
+      "is_correct": false
+    },
+    {
+      "expression": "56/56/8",
+      "generated": "0.125",
+      "generated_normalized": "0.125",
+      "correct": "0.125",
+      "is_correct": true
+    },
+    {
+      "expression": "54/54/8/6",
+      "generated": "0.0208",
+      "generated_normalized": "0.0208",
+      "correct": "0.0208",
+      "is_correct": true
+    },
+    {
+      "expression": "68/68/4/7",
+      "generated": "0.0357",
+      "generated_normalized": "0.0357",
+      "correct": "0.0357",
+      "is_correct": true
+    },
+    {
+      "expression": "43/43/10/3",
+      "generated": "0.0333",
+      "generated_normalized": "0.0333",
+      "correct": "0.0333",
+      "is_correct": true
+    },
+    {
+      "expression": "76/19/2/2",
+      "generated": "0.5",
+      "generated_normalized": "0.5",
+      "correct": "1",
+      "is_correct": false
+    },
+    {
+      "expression": "70/35/7/2",
+      "generated": "0.1429",
+      "generated_normalized": "0.1429",
+      "correct": "0.1429",
+      "is_correct": true
+    },
+    {
+      "expression": "80/80/10/6",
+      "generated": "0.0167",
+      "generated_normalized": "0.0167",
+      "correct": "0.0167",
+      "is_correct": true
+    },
+    {
+      "expression": "77/77",
+      "generated": "1",
+      "generated_normalized": "1",
+      "correct": "1",
+      "is_correct": true
+    },
+    {
+      "expression": "91/13/10/9",
+      "generated": "0.0333",
+      "generated_normalized": "0.0333",
+      "correct": "0.0778",
+      "is_correct": false
+    },
+    {
+      "expression": "92/92/6/3",
+      "generated": "0.0556",
+      "generated_normalized": "0.0556",
+      "correct": "0.0556",
+      "is_correct": true
+    },
+    {
+      "expression": "40/20/9/10",
+      "generated": "0.0222",
+      "generated_normalized": "0.0222",
+      "correct": "0.0222",
+      "is_correct": true
+    },
+    {
+      "expression": "64/64/2",
+      "generated": "0.5",
+      "generated_normalized": "0.5",
+      "correct": "0.5",
+      "is_correct": true
+    },
+    {
+      "expression": "91/91/7",
+      "generated": "0.1429",
+      "generated_normalized": "0.1429",
+      "correct": "0.1429",
+      "is_correct": true
+    },
+    {
+      "expression": "94/94/5",
+      "generated": "0.2",
+      "generated_normalized": "0.2",
+      "correct": "0.2",
+      "is_correct": true
+    },
+    {
+      "expression": "60/60",
+      "generated": "1",
+      "generated_normalized": "1",
+      "correct": "1",
+      "is_correct": true
+    },
+    {
+      "expression": "60/60/8/4",
+      "generated": "0.0312",
+      "generated_normalized": "0.0312",
+      "correct": "0.0312",
+      "is_correct": true
+    },
+    {
+      "expression": "15/15/10/5",
+      "generated": "0.02",
+      "generated_normalized": "0.02",
+      "correct": "0.02",
+      "is_correct": true
+    },
+    {
+      "expression": "61/61/5/6",
+      "generated": "0.0333",
+      "generated_normalized": "0.0333",
+      "correct": "0.0333",
+      "is_correct": true
+    },
+    {
+      "expression": "58/58/6",
+      "generated": "0.1667",
+      "generated_normalized": "0.1667",
+      "correct": "0.1667",
+      "is_correct": true
+    },
+    {
+      "expression": "98/98/7/3",
+      "generated": "0.0476",
+      "generated_normalized": "0.0476",
+      "correct": "0.0476",
+      "is_correct": true
+    },
+    {
+      "expression": "59/59/2",
+      "generated": "0.5",
+      "generated_normalized": "0.5",
+      "correct": "0.5",
+      "is_correct": true
+    },
+    {
+      "expression": "66/66/5/6",
+      "generated": "0.0333",
+      "generated_normalized": "0.0333",
+      "correct": "0.0333",
+      "is_correct": true
+    },
+    {
+      "expression": "55/55",
+      "generated": "1",
+      "generated_normalized": "1",
+      "correct": "1",
+      "is_correct": true
+    },
+    {
+      "expression": "96/96/10",
+      "generated": "0.1",
+      "generated_normalized": "0.1",
+      "correct": "0.1",
+      "is_correct": true
+    },
+    {
+      "expression": "81/81/6/2",
+      "generated": "0.0833",
+      "generated_normalized": "0.0833",
+      "correct": "0.0833",
+      "is_correct": true
+    },
+    {
+      "expression": "80/20",
+      "generated": "4",
+      "generated_normalized": "4",
+      "correct": "4",
+      "is_correct": true
+    },
+    {
+      "expression": "30/30/5",
+      "generated": "0.2",
+      "generated_normalized": "0.2",
+      "correct": "0.2",
+      "is_correct": true
+    },
+    {
+      "expression": "61/61/7/2",
+      "generated": "0.0714",
+      "generated_normalized": "0.0714",
+      "correct": "0.0714",
+      "is_correct": true
+    },
+    {
+      "expression": "31/31/2/6",
+      "generated": "0.0833",
+      "generated_normalized": "0.0833",
+      "correct": "0.0833",
+      "is_correct": true
+    }
+  ]
+}
