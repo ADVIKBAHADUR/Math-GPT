@@ -1,5 +1,12 @@
 """
 Training script for MathGPT with curriculum learning
+
+Features:
+- Curriculum learning with 15 stages (reciprocals → 1-digit → 2-digit operations)
+- Stage-based tolerance: Stages 8+ allow ±1 error for division rounding
+- Checkpoint loading: Set CHECKPOINT_PATH to resume from a saved model
+- Answer masking: Prevents invalid tokens (+, *, /, =) in answers during generation
+- Fast & full evaluation modes for efficient training
 """
 import torch
 import torch.nn as nn
@@ -19,20 +26,27 @@ from data import (
     convert_division_to_multiplication
 )
 
-
 # hyperparameters - tuned for math expressions
-batch_size = 32
-block_size = 28
+batch_size = 64
+block_size = 64
 max_iters = 100000
 eval_interval = 200  # Reduced frequency for faster training
-learning_rate = 5e-4
+learning_rate = 1e-4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(device)
 eval_iters = 20  # Reduced from 100 for faster training
-n_embd = 96
-n_head = 6
-n_layer = 4
+n_embd = 128
+n_head = 8
+n_layer = 6
 dropout = 0.2
+
+# Performance optimizations
+FAST_MODE = True  # Skip expensive per-iteration evaluations
+EVAL_SUBSET_SIZE = 30  # Evaluate on subset of expressions for speed
+DISABLE_ANSWER_MASKING = False  # Set to True if model struggles to learn
+# To resume training from a checkpoint, set path to a .pt file:
+# Example: CHECKPOINT_PATH = 'runs/models/reciprocal_curriculum_.../stage_3_2b_Simple_Negatives_completed.pt'
+CHECKPOINT_PATH =  "/root/Math-GPT/runs/models/reciprocal_curriculum_lr0.0001_emb128_h8_l6_20251215_225258/stage_7_5_Mult_Div_Mixed_2digit_best_loss.pt" # Path to .pt file to resume training
 
 torch.manual_seed(1337)
 random.seed(1337)
@@ -62,6 +76,8 @@ curriculum_config = {
     'accuracy_threshold': curriculum_stages[0].get('accuracy_threshold', 0.95),
     'is_reciprocal_stage': curriculum_stages[0].get('is_reciprocal_stage', False),
     'use_reciprocal_for_division': curriculum_stages[0].get('use_reciprocal_for_division', False),
+    'include_negative': curriculum_stages[0].get('include_negative', False),
+    'simple_negatives_only': curriculum_stages[0].get('simple_negatives_only', False),
 }
 
 current_stage = 0
@@ -107,9 +123,63 @@ def estimate_loss(model):
     return out
 
 
+def fast_evaluate_subset(model, expressions, max_samples=30, debug=False, stage_index=0):
+    """Quick evaluation on subset of expressions - much faster than full evaluation"""
+    model.eval()
+    correct = 0
+    total = min(len(expressions), max_samples)
+    mismatches = []  # Track first few mismatches to show
+    
+    if debug:
+        print(f"\n  DEBUG: Fast eval on {total} expressions")
+        print(f"  First 3 expressions: {expressions[:3]}")
+    
+    for i in range(total):
+        expr = expressions[i]
+        try:
+            if '=' in expr:
+                expr_input = expr.split('=')[0]
+                expected = expr.split('=')[1].strip()
+            else:
+                expr_input = expr
+                expected = str(round(eval(expr), 1))
+            
+            generated = model.generate_math_answer(expr_input, encode, decode, itos, max_new_tokens=20)
+            if '=' in generated:
+                generated_answer = generated.split('=')[1].strip().replace('\n', '')
+                generated_normalized = normalize_answer(generated_answer)
+                expected_normalized = normalize_answer(expected)
+                is_correct = check_answer_correct(generated_normalized, expected_normalized, stage_index)
+                
+                if is_correct:
+                    correct += 1
+                elif len(mismatches) < 5:  # Collect first 5 mismatches
+                    mismatches.append((expr_input, generated_answer, expected))
+                
+                if debug and i < 5:
+                    status = "✓" if is_correct else "✗"
+                    print(f"    {status} {expr_input} = {generated_answer} (norm: {generated_normalized}, expected: {expected_normalized})")
+        except Exception as e:
+            if debug and i < 5:
+                print(f"    ✗ {expr} - ERROR: {e}")
+            pass
+    
+    # Print first few mismatches for debugging
+    if mismatches and not debug:
+        for expr_input, generated_answer, expected in mismatches:
+            print(f"    MISMATCH: {expr_input} | Generated: {generated_answer} | Expected: {expected}")
+    
+    model.train()
+    accuracy = correct / total if total > 0 else 0.0
+    if debug:
+        print(f"  Fast eval result: {correct}/{total} = {accuracy:.1%}\n")
+    return accuracy
+
+
 @torch.no_grad()
 def normalize_answer(ans_str):
-    """Normalize answer string for consistent comparison - 1 decimal place precision"""
+    """Normalize answer string for consistent comparison - 1 decimal place precision
+    Note: Reciprocals are stored at 2 decimals but compared at 1 decimal for tolerance"""
     try:
         # Clean the string
         ans_clean = ans_str.strip().replace('\n', '')
@@ -118,12 +188,52 @@ def normalize_answer(ans_str):
         # ALWAYS format with 1 decimal place
         return f"{val:.1f}"
     except:
-        return ans_str.strip()
+        return ans_str
+
+
+def check_answer_correct(generated_normalized, expected_normalized, stage_index):
+    """Check if answer is correct with stage-based tolerance
+    
+    Args:
+        generated_normalized: Generated answer (normalized string)
+        expected_normalized: Expected answer (normalized string)
+        stage_index: Current curriculum stage (0-indexed)
+    
+    Returns:
+        bool: True if answer is correct (exact or within tolerance)
+    """
+    # Stages 8+ allow ±1 tolerance due to division rounding errors
+    if stage_index >= 8:
+        try:
+            gen_val = float(generated_normalized)
+            exp_val = float(expected_normalized)
+            # Accept if within ±1
+            return abs(gen_val - exp_val) <= 1.0
+        except:
+            return generated_normalized == expected_normalized
+    else:
+        # Stages 0-7: exact match required
+        return generated_normalized == expected_normalized
 
 
 @torch.no_grad()
-def evaluate_math_accuracy(model, current_stage):
-    """Evaluate model accuracy on math expressions with per-operation breakdown"""
+def old_normalize_answer_fallback(ans_str):
+    """Fallback when normalize fails"""
+    return ans_str.strip()
+
+
+@torch.no_grad()
+def evaluate_math_accuracy(model, current_stage, validation_expressions=None, track_details=False):
+    """Evaluate model accuracy on math expressions with per-operation breakdown
+    
+    Args:
+        model: The model to evaluate
+        current_stage: Current curriculum stage index (0-indexed)
+        validation_expressions: Optional list of expressions to evaluate. If None, uses hardcoded test sets.
+        track_details: If False, skip building detailed operation_results (much faster)
+    
+    Note: Stages 8+ use ±1 tolerance for division rounding errors
+    """
     model.eval()
     
     current_num_digits = curriculum_stages[current_stage]['num_digits']
@@ -166,6 +276,7 @@ def evaluate_math_accuracy(model, current_stage):
                         'is_correct': False
                     })
             except Exception as e:
+                print(f"Error evaluating expression {expr}: {e}")
                 operation_results['reciprocals'].append({
                     'expression': expr,
                     'generated': 'ERROR',
@@ -188,6 +299,92 @@ def evaluate_math_accuracy(model, current_stage):
         return accuracy, operation_stats, operation_results
     
     # Generate test expressions based on current stage configuration
+    # Use validation_expressions if provided, otherwise fall back to hardcoded test sets
+    if validation_expressions:
+        # Use the validation set (properly updated for current stage)
+        # Evaluate all validation expressions to get accurate per-operation stats
+        expressions_to_test = validation_expressions
+        
+        # For validation expressions, we evaluate them all as one category
+        # since they're already filtered for the current stage
+        operation_results = {'current_stage': []} if track_details else {}
+        correct = 0
+        total = len(expressions_to_test)
+        
+        use_reciprocal = stage_config.get('use_reciprocal_for_division', False)
+        
+        for expr in expressions_to_test:
+            try:
+                if '=' in expr:
+                    expr_input = expr.split('=')[0]
+                    expected = expr.split('=')[1].strip()
+                else:
+                    expr_input = expr
+                    # Convert division if needed for expected value
+                    test_expr_for_eval = expr_input
+                    if use_reciprocal and '/' in expr_input:
+                        test_expr_for_eval = convert_division_to_multiplication(expr_input)
+                    expected = f"{eval(test_expr_for_eval):.1f}"
+                
+                # Test with conversion if needed
+                test_expr = expr_input
+                if use_reciprocal and '/' in expr_input:
+                    test_expr = convert_division_to_multiplication(expr_input)
+                
+                generated = model.generate_math_answer(test_expr, encode, decode, itos, max_new_tokens=20)
+                
+                if '=' in generated:
+                    generated_answer = generated.split('=')[1].strip().replace('\n', '')
+                    generated_normalized = normalize_answer(generated_answer)
+                    expected_normalized = normalize_answer(expected)
+                    is_correct = check_answer_correct(generated_normalized, expected_normalized, current_stage)
+                    
+                    if is_correct:
+                        correct += 1
+                    
+                    if track_details:
+                        operation_results['current_stage'].append({
+                            'expression': expr_input,
+                            'tested_as': test_expr if test_expr != expr_input else None,
+                            'generated': generated_answer,
+                            'generated_normalized': generated_normalized,
+                            'correct': expected_normalized,
+                            'is_correct': is_correct
+                        })
+                else:
+                    if track_details:
+                        operation_results['current_stage'].append({
+                            'expression': expr_input,
+                            'tested_as': test_expr if test_expr != expr_input else None,
+                            'generated': 'MALFORMED',
+                            'generated_normalized': 'MALFORMED',
+                            'correct': expected,
+                            'is_correct': False
+                        })
+            except Exception as e:
+                if track_details:
+                    operation_results['current_stage'].append({
+                        'expression': expr_input if '=' in expr else expr,
+                        'generated': 'ERROR',
+                        'generated_normalized': 'ERROR',
+                        'correct': expected if 'expected' in locals() else 'N/A',
+                        'is_correct': False,
+                        'error': str(e)
+                    })
+        
+        accuracy = correct / total if total > 0 else 0
+        operation_stats = {
+            'current_stage': {
+                'accuracy': accuracy,
+                'error_rate': (total - correct) / total if total > 0 else 0,
+                'correct': correct,
+                'total': total
+            }
+        }
+        model.train()
+        return accuracy, operation_stats, operation_results
+    
+    # Fall back to hardcoded test expressions if validation_expressions not provided
     if current_num_digits == 1:
         test_expressions = test_expressions_1digit
     else:
@@ -241,7 +438,13 @@ def evaluate_math_accuracy(model, current_stage):
                 generated = model.generate_math_answer(test_expr, encode, decode, itos)
                 if '=' in generated:
                     generated_answer = generated.split('=')[1].strip().replace('\n', '')
-                    correct_val = eval(expr)
+                    
+                    # CRITICAL FIX: Evaluate the CONVERTED expression for correct answer
+                    if use_reciprocal and test_expr != expr:
+                        correct_val = eval(test_expr)  # Use converted expression
+                    else:
+                        correct_val = eval(expr)  # Original expression
+                    
                     correct_answer_raw = f"{float(correct_val):.1f}"
                     generated_normalized = normalize_answer(generated_answer)
                     correct_normalized = normalize_answer(correct_answer_raw)
@@ -252,16 +455,22 @@ def evaluate_math_accuracy(model, current_stage):
                         all_correct += 1
                     operation_results[category].append({
                         'expression': expr,
+                        'tested_as': test_expr if test_expr != expr else None,
                         'generated': generated_answer,
                         'generated_normalized': generated_normalized,
                         'correct': correct_normalized,
                         'is_correct': is_correct
                     })
                 else:
-                    correct_val = eval(expr)
+                    # CRITICAL FIX: Evaluate converted expression if applicable
+                    if use_reciprocal and test_expr != expr:
+                        correct_val = eval(test_expr)
+                    else:
+                        correct_val = eval(expr)
                     correct_normalized = normalize_answer(f"{float(correct_val):.1f}")
                     operation_results[category].append({
                         'expression': expr,
+                        'tested_as': test_expr if test_expr != expr else None,
                         'generated': 'MALFORMED',
                         'generated_normalized': 'MALFORMED',
                         'correct': correct_normalized,
@@ -308,7 +517,8 @@ def test_math_expressions(model, model_save_dir):
     """Test the model on sample math expressions with comprehensive per-operation analysis"""
     print("\n=== Final Math Expression Test ===")
     
-    final_accuracy, operation_stats, operation_results = evaluate_math_accuracy(model, current_stage)
+    # Final evaluation - keep detailed results for reporting
+    final_accuracy, operation_stats, operation_results = evaluate_math_accuracy(model, current_stage, val_expressions, track_details=True)
     
     print("\n" + "="*60)
     print("PERFORMANCE BY OPERATION")
@@ -356,12 +566,34 @@ def test_math_expressions(model, model_save_dir):
 
 def interactive_math_mode(model):
     """Interactive mode for user input"""
+    print(f"\n{'='*70}")
+    print(f"Current Stage: {current_stage+1}/{len(curriculum_stages)} - {curriculum_stages[current_stage]['name']}")
+    print(f"Operators trained: {curriculum_stages[current_stage]['operators']}")
+    use_reciprocal = curriculum_stages[current_stage].get('use_reciprocal_for_division', False)
+    if use_reciprocal:
+        print(f"⚠️  Note: Division is converted to multiplication with reciprocals")
+    print(f"{'='*70}\n")
+    
     while True:
         user_input = input("Enter a math expression (or 'exit' to quit): ")
         if user_input.lower() == 'exit':
             break
-        generated = model.generate_math_answer(user_input, encode, decode, itos)
+        
+        # Convert division if current stage uses reciprocals
+        test_expr = user_input
+        if use_reciprocal and '/' in user_input:
+            test_expr = convert_division_to_multiplication(user_input)
+            print(f"  [Converted to: {test_expr}]")
+        
+        generated = model.generate_math_answer(test_expr, encode, decode, itos)
         print(f"AI-generated answer: {generated.strip()}")
+        
+        # Show expected answer for comparison
+        try:
+            expected = eval(test_expr)
+            print(f"Expected: {user_input}={expected:.1f}\n")
+        except:
+            print()
 
 
 def main():
@@ -370,9 +602,63 @@ def main():
     # Initialize model
     model = GPTLanguageModel(vocab_size, n_embd, n_head, n_layer, block_size, dropout, device, stoi)
     model = model.to(device)
+    
+    # Load checkpoint if specified
+    start_iter = 0
+    if CHECKPOINT_PATH and os.path.exists(CHECKPOINT_PATH):
+        print(f"\n{'='*70}")
+        print(f"LOADING CHECKPOINT: {CHECKPOINT_PATH}")
+        print(f"{'='*70}")
+        checkpoint = torch.load(CHECKPOINT_PATH, map_location=device, weights_only=False)
+        # Use strict=False to ignore cached mask buffers from previous runs
+        model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        print(f"✓ Model state loaded")
+        
+        # Load curriculum stage if available
+        if 'current_stage' in checkpoint:
+            current_stage = checkpoint['current_stage']
+            print(f"✓ Resuming from stage {current_stage}: {curriculum_stages[current_stage]['name']}")
+            
+            # Update curriculum config for resumed stage
+            stage_info = curriculum_stages[current_stage]
+            curriculum_config['operators'] = stage_info['operators']
+            curriculum_config['num_digits'] = stage_info['num_digits']
+            curriculum_config['max_value'] = stage_info['max_value']
+            curriculum_config['max_terms'] = stage_info.get('max_terms', 3)
+            curriculum_config['accuracy_threshold'] = stage_info.get('accuracy_threshold', 0.95)
+            curriculum_config['is_reciprocal_stage'] = stage_info.get('is_reciprocal_stage', False)
+            curriculum_config['use_reciprocal_for_division'] = stage_info.get('use_reciprocal_for_division', False)
+            curriculum_config['include_negative'] = stage_info.get('include_negative', False)
+            curriculum_config['simple_negatives_only'] = stage_info.get('simple_negatives_only', False)
+            
+            # Regenerate validation set for current stage
+            val_expressions = update_validation_set(curriculum_config, val_set_size)
+        
+        if 'iter' in checkpoint:
+            start_iter = checkpoint['iter']
+            print(f"✓ Resuming from iteration {start_iter}")
+        
+        print(f"{'='*70}\n")
+    elif CHECKPOINT_PATH:
+        print(f"⚠️  Checkpoint path specified but not found: {CHECKPOINT_PATH}")
+        print(f"   Starting from scratch...\n")
+    
+    # Optionally disable answer masking for faster/easier learning
+    if DISABLE_ANSWER_MASKING:
+        model._use_answer_masking = False
+        print("⚠️  Answer masking DISABLED for easier learning")
+    
     print(f"{sum(p.numel() for p in model.parameters())/1e6:.2f}M parameters")
     
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    
+    # Add learning rate scheduler for curriculum learning stability
+    # Reduce LR when loss plateaus or when switching stages
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=50, verbose=True, min_lr=1e-6
+    )
+    print(f"✓ Using AdamW optimizer with ReduceLROnPlateau scheduler")
+    print(f"  Initial LR: {learning_rate}, Min LR: 1e-6, Patience: 50 steps")
     
     # Log hyperparameters
     writer.add_hparams({
@@ -393,6 +679,13 @@ def main():
     os.makedirs(results_dir, exist_ok=True)
     best_val_loss = float('inf')
     best_accuracy = 0.0
+    
+    # Per-stage tracking for best models
+    stage_best_accuracy = {}  # Track best accuracy per stage
+    stage_best_loss = {}  # Track best loss per stage
+    for i in range(len(curriculum_stages)):
+        stage_best_accuracy[i] = 0.0
+        stage_best_loss[i] = float('inf')
     
     csv_file = f'{results_dir}/curriculum_learning_results.csv'
     
@@ -436,38 +729,59 @@ def main():
     start_time = time.time()
     losses = {}
     
-    for iter in range(max_iters):
+    for iter in range(start_iter, max_iters):
         # Evaluate loss on train and val sets
         if iter % eval_interval == 0 or iter == max_iters - 1:
             losses = estimate_loss(model)
-            math_accuracy, operation_stats, operation_results = evaluate_math_accuracy(model, current_stage)
             
-            # Log metrics to TensorBoard
-            writer.add_scalars('Loss_Comparison', {
-                'Train': losses['train'],
-                'Validation': losses['val']
-            }, iter)
+            # Use fast evaluation during training, full evaluation at milestones
+            # Always do full eval for reciprocal stage (stage 0) or at important checkpoints
+            is_reciprocal_stage = curriculum_stages[current_stage].get('is_reciprocal_stage', False)
+            is_milestone = iter % (eval_interval * 5) == 0 or iter == max_iters - 1
             
-            writer.add_scalar('Accuracy/Overall', math_accuracy, iter)
-            writer.add_scalar('Learning/Learning_Rate', learning_rate, iter)
+            if FAST_MODE and not is_reciprocal_stage and not is_milestone and iter > 0:
+                # Quick accuracy check on small subset
+                sample_exprs = val_expressions[:EVAL_SUBSET_SIZE]
+                # Disable debug for speed - only enable manually if needed
+                math_accuracy = fast_evaluate_subset(model, sample_exprs, EVAL_SUBSET_SIZE, debug=False, stage_index=current_stage)
+                operation_stats = {}
+                operation_results = {}
+            else:
+                # Full evaluation at milestones, for reciprocal stage, or first iteration
+                # Use the validation set for consistency with fast eval
+                # Skip detailed tracking during training for speed (only need accuracy)
+                math_accuracy, operation_stats, operation_results = evaluate_math_accuracy(model, current_stage, val_expressions, track_details=False)
             
-            accuracy_dict = {cat.replace('_', ' ').title(): stats['accuracy'] 
-                            for cat, stats in operation_stats.items()}
-            if accuracy_dict:
-                writer.add_scalars('Accuracy/By_Category', accuracy_dict, iter)
-            
-            error_dict = {cat.replace('_', ' ').title(): stats['error_rate'] 
-                         for cat, stats in operation_stats.items()}
-            if error_dict:
-                writer.add_scalars('Error_Rate/By_Category', error_dict, iter)
-            
-            for category, results in operation_results.items():
-                sample_text = "\n".join([f"{r['expression']}: {r['generated']} (correct: {r['correct']}, ✓={r['is_correct']})" 
-                                        for r in results[:3]])
-                writer.add_text(f'Sample_Predictions/{category.replace("_", " ").title()}', sample_text, iter)
-            
-            elapsed_time = time.time() - start_time
-            writer.add_scalar('Training/Time_Elapsed', elapsed_time, iter)
+            # Log metrics to TensorBoard (reduced frequency for speed)
+            should_log_tensorboard = (iter % (eval_interval * 5) == 0) or iter == max_iters - 1 or is_milestone
+            if should_log_tensorboard:
+                writer.add_scalars('Loss_Comparison', {
+                    'Train': losses['train'],
+                    'Validation': losses['val']
+                }, iter)
+                
+                writer.add_scalar('Accuracy/Overall', math_accuracy, iter)
+                writer.add_scalar('Learning/Learning_Rate', optimizer.param_groups[0]['lr'], iter)
+                
+                accuracy_dict = {cat.replace('_', ' ').title(): stats['accuracy'] 
+                                for cat, stats in operation_stats.items()}
+                if accuracy_dict:
+                    writer.add_scalars('Accuracy/By_Category', accuracy_dict, iter)
+                
+                error_dict = {cat.replace('_', ' ').title(): stats['error_rate'] 
+                             for cat, stats in operation_stats.items()}
+                if error_dict:
+                    writer.add_scalars('Error_Rate/By_Category', error_dict, iter)
+                
+                # Only log sample predictions at milestones (heavy operation)
+                if operation_results and is_milestone:
+                    for category, results in operation_results.items():
+                        sample_text = "\n".join([f"{r['expression']}: {r['generated']} (correct: {r['correct']}, ✓={r['is_correct']})" 
+                                                for r in results[:3]])
+                        writer.add_text(f'Sample_Predictions/{category.replace("_", " ").title()}', sample_text, iter)
+                
+                elapsed_time = time.time() - start_time
+                writer.add_scalar('Training/Time_Elapsed', elapsed_time, iter)
             
             # Save best models
             if losses['val'] < best_val_loss:
@@ -486,7 +800,8 @@ def main():
                     'vocab_size': vocab_size,
                     'chars': chars,
                     'stoi': stoi,
-                    'itos': itos
+                    'itos': itos,
+                    'block_size': block_size
                 }, f'{model_save_dir}/best_model.pt')
                 print(f"  -> New best model saved (val_loss: {best_val_loss:.4f})")
             
@@ -506,9 +821,58 @@ def main():
                     'vocab_size': vocab_size,
                     'chars': chars,
                     'stoi': stoi,
-                    'itos': itos
+                    'itos': itos,
+                    'block_size': block_size
                 }, f'{model_save_dir}/best_accuracy_model.pt')
                 print(f"  -> New best accuracy model saved (accuracy: {best_accuracy:.3f})")
+            
+            # Per-stage best model tracking (only save at milestones to reduce I/O)
+            if is_milestone or iter == max_iters - 1:
+                if math_accuracy > stage_best_accuracy[current_stage]:
+                    stage_best_accuracy[current_stage] = math_accuracy
+                    stage_file = f'{model_save_dir}/stage_{current_stage}_{curriculum_stages[current_stage]["name"]}_best.pt'
+                    torch.save({
+                        'run_name': run_name,
+                        'model_state_dict': model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'val_loss': losses['val'],
+                        'train_loss': losses['train'],
+                        'math_accuracy': math_accuracy,
+                        'operation_stats': operation_stats,
+                        'epoch': iter,
+                        'curriculum_stage': current_stage,
+                        'curriculum_stage_name': curriculum_stages[current_stage]['name'],
+                        'stage_best_accuracy': math_accuracy,
+                        'vocab_size': vocab_size,
+                        'chars': chars,
+                        'stoi': stoi,
+                        'itos': itos,
+                        'block_size': block_size
+                    }, stage_file)
+                    print(f"  -> Stage {current_stage} best saved: {math_accuracy:.3f}")
+                
+                if losses['val'] < stage_best_loss[current_stage]:
+                    stage_best_loss[current_stage] = losses['val']
+                    stage_file = f'{model_save_dir}/stage_{current_stage}_{curriculum_stages[current_stage]["name"]}_best_loss.pt'
+                    torch.save({
+                        'run_name': run_name,
+                        'model_state_dict': model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'val_loss': losses['val'],
+                        'train_loss': losses['train'],
+                        'math_accuracy': math_accuracy,
+                        'operation_stats': operation_stats,
+                        'epoch': iter,
+                        'curriculum_stage': current_stage,
+                        'curriculum_stage_name': curriculum_stages[current_stage]['name'],
+                        'stage_best_loss': losses['val'],
+                        'vocab_size': vocab_size,
+                        'chars': chars,
+                        'stoi': stoi,
+                        'itos': itos,
+                        'block_size': block_size
+                    }, stage_file)
+                    print(f"  -> Stage {current_stage} best loss saved: {losses['val']:.4f}")
             
             # Curriculum progression logic
             stage_info = curriculum_stages[current_stage]
@@ -521,34 +885,69 @@ def main():
             curriculum_config['max_terms'] = stage_info.get('max_terms', 3)
             curriculum_config['accuracy_threshold'] = stage_info.get('accuracy_threshold', 0.95)
             
+            # Calculate accuracy on current stage operations
             current_ops_correct = 0
             current_ops_total = 0
             
-            for category, stats in operation_stats.items():
-                current_ops_correct += stats['correct']
-                current_ops_total += stats['total']
-            
-            current_ops_accuracy = current_ops_correct / current_ops_total if current_ops_total > 0 else 0
+            if operation_stats:
+                for category, stats in operation_stats.items():
+                    current_ops_correct += stats['correct']
+                    current_ops_total += stats['total']
+                
+                current_ops_accuracy = current_ops_correct / current_ops_total if current_ops_total > 0 else 0
+                progress_msg = f"{current_ops_correct}/{current_ops_total} correct"
+            else:
+                # In fast mode, use overall accuracy as proxy
+                current_ops_accuracy = math_accuracy
+                progress_msg = "fast eval"
             
             print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, overall acc {math_accuracy:.3f}")
-            target_pct = curriculum_config['accuracy_threshold'] * 100
-            print(f"  🎯 Stage {current_stage+1}/{len(curriculum_stages)} '{stage_name}': {current_ops_correct}/{current_ops_total} correct ({current_ops_accuracy:.1%}) - Need {target_pct:.0f}%")
+            print(f"  🎯 Stage {current_stage+1}/{len(curriculum_stages)} '{stage_name}': {progress_msg} ({current_ops_accuracy:.1%}) - Need {curriculum_config['accuracy_threshold']:.0%}")
             
-            # Show sample predictions every 500 steps for debugging
-            if iter % 500 == 0 and iter > 0:
+            # Show sample predictions every 1000 steps for debugging (reduced frequency)
+            if iter % 1000 == 0 and iter > 0 and operation_results:
                 print(f"\n  📝 Sample predictions for Stage '{stage_name}':")
+                use_reciprocal_display = stage_info.get('use_reciprocal_for_division', False)
                 for category, results in operation_results.items():
                     if results:
                         print(f"    {category.upper()}:")
-                        # Show first 5 examples
-                        for r in results[:5]:
+                        # Show first 3 examples only (reduced from 5)
+                        for r in results[:3]:
                             status = "✓" if r['is_correct'] else "✗"
                             gen = r.get('generated', 'N/A')
-                            print(f"      {status} {r['expression']:15s} = {gen:10s} → {r['generated_normalized']:8s} (expected: {r['correct']})")
+                            expr = r['expression']
+                            tested_as = r.get('tested_as', None)
+                            
+                            # Show both original and converted if different
+                            if tested_as:
+                                print(f"      {status} {expr:15s} (as {tested_as}) = {gen:10s} → {r['generated_normalized']:8s} (expected: {r['correct']})")
+                            else:
+                                print(f"      {status} {expr:15s} = {gen:10s} → {r['generated_normalized']:8s} (expected: {r['correct']})")
                 print()
             
             # Progress to next stage if 100% accuracy achieved
             if current_ops_accuracy >= curriculum_config['accuracy_threshold'] and current_stage < len(curriculum_stages) - 1:
+                # FORCE FULL EVALUATION before allowing progression (not just fast subset)
+                if FAST_MODE and operation_stats == {}:
+                    print(f"\n  📊 Running FULL evaluation before stage progression...")
+                    # Skip detailed tracking - we only need the accuracy count
+                    math_accuracy, operation_stats, operation_results = evaluate_math_accuracy(model, current_stage, val_expressions, track_details=False)
+                    
+                    # Recalculate accuracy with full evaluation
+                    current_ops_correct = 0
+                    current_ops_total = 0
+                    for category, stats in operation_stats.items():
+                        current_ops_correct += stats['correct']
+                        current_ops_total += stats['total']
+                    current_ops_accuracy = current_ops_correct / current_ops_total if current_ops_total > 0 else 0
+                    print(f"  📊 Full evaluation: {current_ops_correct}/{current_ops_total} = {current_ops_accuracy:.1%}")
+                    
+                    # Check if still meets threshold after full eval
+                    if current_ops_accuracy < curriculum_config['accuracy_threshold']:
+                        print(f"  ⚠️  Full evaluation shows accuracy below threshold!")
+                        print(f"      Fast subset was optimistic. Continuing training...\n")
+                        continue
+                
                 print(f"\n{'='*60}")
                 print(f"✓ CURRICULUM PROGRESSION: Stage {current_stage} '{stage_name}' mastered!")
                 print(f"   Accuracy: {current_ops_correct}/{current_ops_total} = {current_ops_accuracy:.1%}")
@@ -571,6 +970,7 @@ def main():
                     'chars': chars,
                     'stoi': stoi,
                     'itos': itos,
+                    'block_size': block_size,
                     'hyperparameters': {
                         'batch_size': batch_size,
                         'block_size': block_size,
@@ -592,12 +992,22 @@ def main():
                 curriculum_config['accuracy_threshold'] = next_stage_info.get('accuracy_threshold', 0.95)
                 curriculum_config['is_reciprocal_stage'] = next_stage_info.get('is_reciprocal_stage', False)
                 curriculum_config['use_reciprocal_for_division'] = next_stage_info.get('use_reciprocal_for_division', False)
+                curriculum_config['include_negative'] = next_stage_info.get('include_negative', False)
+                curriculum_config['simple_negatives_only'] = next_stage_info.get('simple_negatives_only', False)
+                
+                # Clear cached answer mask so it can be regenerated with new valid tokens if needed
+                if hasattr(model, '_invalid_answer_mask'):
+                    delattr(model, '_invalid_answer_mask')
+                    print(f"   ⚠️  Cleared cached answer mask for new stage")
                 print(f"   Moving to Stage {current_stage+1}: {next_stage_info['name']}")
                 print(f"   New operators: {curriculum_config['operators']}")
                 print(f"   Digit complexity: {curriculum_config['num_digits']}-digit")
                 print(f"   New target: {curriculum_config['accuracy_threshold']*100:.0f}%")
                 
+                print(f"\n   🔄 UPDATING VALIDATION SET for new stage...")
                 val_expressions = update_validation_set(curriculum_config, val_set_size)
+                print(f"   ✅ Validation set updated for new stage")
+                print(f"   Sample val expressions: {val_expressions[:5]}")
                 print(f"{'='*60}\n")
                 
                 writer.add_text('Curriculum_Progression', f"""Stage {current_stage}: {next_stage_info['name']}
@@ -660,13 +1070,21 @@ Time saved: {max_iters - iter} iterations not needed""", iter)
                           val_expressions, encode, vocab_size, device)
         logits, loss = model(xb, yb)
         
-        # Reduced logging frequency for better performance
-        if iter % eval_interval == 0:
+        # Reduced logging frequency for better performance (only log every 10 eval intervals)
+        if iter % (eval_interval * 10) == 0:
             writer.add_scalar('Loss/Training_Step', loss.item(), iter)
         
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
+        
+        # Gradient clipping to prevent exploding gradients (especially during stage transitions)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        
         optimizer.step()
+        
+        # Update learning rate based on validation loss
+        if iter % eval_interval == 0 and iter > 0:
+            scheduler.step(losses['val'])
     
     # Save final model
     torch.save({
@@ -679,13 +1097,23 @@ Time saved: {max_iters - iter} iterations not needed""", iter)
         'vocab_size': vocab_size,
         'chars': chars,
         'stoi': stoi,
-        'itos': itos
+        'itos': itos,
+        'block_size': block_size
     }, f'{model_save_dir}/final_model.pt')
     
     print(f"\nModels saved to: {model_save_dir}")
     print(f"- best_model.pt (lowest validation loss: {best_val_loss:.4f})")
     print(f"- best_accuracy_model.pt (highest accuracy: {best_accuracy:.3f})")
     print(f"- final_model.pt (final training state)")
+    
+    # Print per-stage best models
+    print(f"\nPer-stage best models:")
+    for stage_idx in range(current_stage + 1):
+        stage_name = curriculum_stages[stage_idx]['name']
+        if stage_best_accuracy[stage_idx] > 0:
+            print(f"  Stage {stage_idx}: {stage_name}")
+            print(f"    - Best accuracy: {stage_best_accuracy[stage_idx]:.3f}")
+            print(f"    - Best loss: {stage_best_loss[stage_idx]:.4f}")
     
     # Test the trained model
     print("\nTesting MathGPT...")

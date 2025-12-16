@@ -205,6 +205,7 @@ class GPTLanguageModel(nn.Module):
         self.block_size = block_size
         self.vocab_size = vocab_size
         self.device = device
+        self._use_answer_masking = True  # Can disable for faster training
         
         # Store token mappings for MSE loss calculation
         self.stoi = stoi
@@ -257,24 +258,37 @@ class GPTLanguageModel(nn.Module):
         x = self.ln_f(x) # (B,T,C)
         logits = self.lm_head(x) # (B,T,vocab_size)
         
-        # ANSWER MASKING: Restrict output vocabulary after '='
+        # ANSWER MASKING: Restrict output vocabulary after '=' (OPTIMIZED - vectorized)
         # Only allow digits (0-9), decimal point (.), and newline in answers
-        if targets is not None:
-            valid_answer_tokens = [self.stoi[str(i)] for i in range(10)]  # 0-9
-            valid_answer_tokens.extend([self.stoi['.'], self.stoi['\n']])
+        if targets is not None and hasattr(self, '_use_answer_masking') and self._use_answer_masking:
+            # Find '=' positions vectorized (avoid .cpu().tolist())
+            eq_token = self.stoi['=']
+            eq_mask = (targets == eq_token)  # (B, T) boolean mask
             
-            # Create mask for invalid tokens
-            invalid_mask = torch.ones(self.vocab_size, dtype=torch.bool, device=self.device)
-            invalid_mask[valid_answer_tokens] = False
+            # For each sequence, find position after '=' and mask those positions
+            # Use cumsum to get positions after '='
+            answer_positions = torch.cumsum(eq_mask, dim=1) > 0  # (B, T) - True after '='
             
-            # Apply mask to answer portion (after '=')
-            for b in range(B):
-                target_seq = targets[b].cpu().tolist()
-                if self.stoi['='] in target_seq:
-                    eq_pos = target_seq.index(self.stoi['='])
-                    # Zero out invalid tokens in answer portion
-                    for t in range(eq_pos + 1, T):
-                        logits[b, t, invalid_mask] = -1e10  # Very negative = ~0 probability
+            # Shift by 1 to start masking AFTER the '=' token
+            answer_positions = torch.cat([torch.zeros(B, 1, dtype=torch.bool, device=self.device), 
+                                         answer_positions[:, :-1]], dim=1)
+            
+            if answer_positions.any():
+                # Create invalid token mask once if not cached
+                if not hasattr(self, '_invalid_answer_mask'):
+                    valid_answer_tokens = [self.stoi[str(i)] for i in range(10)]  # 0-9
+                    valid_answer_tokens.extend([self.stoi['.'], self.stoi['\n'], self.stoi['-']])  # Add minus for negatives
+                    invalid_mask = torch.ones(self.vocab_size, dtype=torch.bool, device=self.device)
+                    invalid_mask[valid_answer_tokens] = False
+                    self.register_buffer('_invalid_answer_mask', invalid_mask)
+                
+                # Apply mask using broadcasting: (B, T, 1) * (vocab_size,) -> (B, T, vocab_size)
+                answer_mask_3d = answer_positions.unsqueeze(-1)  # (B, T, 1)
+                invalid_mask_3d = self._invalid_answer_mask.unsqueeze(0).unsqueeze(0)  # (1, 1, vocab_size)
+                
+                # Where we have answer positions AND invalid tokens, set to -1e10
+                mask_to_apply = answer_mask_3d & invalid_mask_3d  # (B, T, vocab_size)
+                logits = torch.where(mask_to_apply, torch.tensor(-1e10, device=self.device), logits)
 
         if targets is None:
             loss = None
@@ -288,14 +302,19 @@ class GPTLanguageModel(nn.Module):
             # Standard cross-entropy loss
             ce_loss = F.cross_entropy(logits.view(B*T, C), targets.view(B*T), reduction='none').view(B, T)
             
-            # Weight answer tokens more heavily
+            # Weight answer tokens more heavily (OPTIMIZED - vectorized)
             weights = torch.ones(B, T, device=self.device)
-            for b in range(B):
-                target_seq = targets[b].tolist()
-                if self.stoi['='] in target_seq:
-                    eq_pos = target_seq.index(self.stoi['='])
-                    # Increase weight for answer portion (after '=')
-                    weights[b, eq_pos+1:] = 3.0
+            
+            # Find '=' positions and weight everything after them
+            eq_token = self.stoi['=']
+            eq_mask = (targets == eq_token)  # (B, T)
+            answer_positions = torch.cumsum(eq_mask, dim=1) > 0  # Everything after first '='
+            
+            # Shift to start weighting AFTER '=' token
+            answer_positions = torch.cat([torch.zeros(B, 1, dtype=torch.bool, device=self.device),
+                                         answer_positions[:, :-1]], dim=1)
+            
+            weights[answer_positions] = 3.0
             
             # Weighted cross-entropy
             loss = (ce_loss * weights).mean()
@@ -307,9 +326,24 @@ class GPTLanguageModel(nn.Module):
         expression = expression + "="
         context = torch.tensor(encode(expression), dtype=torch.long, device=self.device).unsqueeze(0)  # (1, T)
         generated = context
+        
+        # Create answer masking for generation (only allow digits, '.', '-', '\n' after '=')
+        # This prevents generating invalid tokens like +, *, /, = in the answer
+        if not hasattr(self, '_generation_invalid_mask'):
+            valid_answer_tokens = [self.stoi[str(i)] for i in range(10)]  # 0-9
+            valid_answer_tokens.extend([self.stoi['.'], self.stoi['\n'], self.stoi['-']])
+            invalid_mask = torch.ones(self.vocab_size, dtype=torch.bool, device=self.device)
+            invalid_mask[valid_answer_tokens] = False
+            self.register_buffer('_generation_invalid_mask', invalid_mask)
+        
         for _ in range(max_new_tokens):
             logits, _ = self(generated)
             logits = logits[:, -1, :]  # (1, vocab_size)
+            
+            # Apply answer masking: we're always after '=' since we added it
+            # Block operators (+, -, *, /, =) from being generated in answer
+            logits = torch.where(self._generation_invalid_mask, torch.tensor(-1e10, device=self.device), logits)
+            
             probs = F.softmax(logits, dim=-1)  # (1, vocab_size)
             next_token = torch.multinomial(probs, num_samples=1)  # (1, 1)
             generated = torch.cat((generated, next_token), dim=1)  # (1, T+1)

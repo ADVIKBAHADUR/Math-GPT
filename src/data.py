@@ -6,36 +6,52 @@ import torch
 import random
 
 
-# Reciprocal lookup table (1/1 to 1/100 with 1 decimal place)
-RECIPROCAL_TABLE = {i: round(1.0 / i, 1) for i in range(1, 101)}
+# Reciprocal lookup table (1/1 to 1/100 with 2 decimal places for better precision)
+# Reciprocal table with 2 decimal precision (accepting some inaccuracies for large denominators)
+# Example: 1/93 = 0.01, 1/50 = 0.02, 1/4 = 0.25
+RECIPROCAL_TABLE = {i: round(1.0 / i, 2) for i in range(1, 101)}
 
 
-def generate_reciprocal_expression(n):
-    """Generate a reciprocal expression: 1/n=result (1 decimal place)"""
+def generate_reciprocal_expression(n, include_negative=False):
+    """Generate a reciprocal expression: 1/n=result (4 decimal places for n>10, 2 for n<=10)
+    If include_negative, sometimes generate -1/n for negative practice
+    """
     if n < 1 or n > 100:
         n = random.randint(1, 100)
-    result = RECIPROCAL_TABLE[n]
-    return f"1/{n}={result:.1f}"
+    
+    # Use 4 decimals for 2-digit numbers, 2 decimals for 1-digit (cleaner display)
+    decimals = 4 if n > 10 else 2
+    
+    # 20% chance of negative reciprocal if enabled
+    if include_negative and random.random() < 0.2:
+        result = -RECIPROCAL_TABLE[n]
+        return f"-1/{n}={result:.{decimals}f}"
+    else:
+        result = RECIPROCAL_TABLE[n]
+        return f"1/{n}={result:.{decimals}f}"
 
 
-def generate_reciprocal_dataset(count=100):
-    """Generate dataset of reciprocals from 1/1 to 1/100"""
+def generate_reciprocal_dataset(count=100, include_negative=False):
+    """Generate dataset of reciprocals from 1/1 to 1/100
+    If include_negative, adds negative reciprocals for early negative exposure
+    """
     expressions = []
     # Cover all reciprocals 1-100
     for i in range(1, 101):
-        expressions.append(generate_reciprocal_expression(i))
+        expressions.append(generate_reciprocal_expression(i, include_negative))
     # Add extra samples for commonly needed reciprocals
     common_divisors = [2, 3, 4, 5, 6, 7, 8, 9, 10]
     for _ in range(count - 100):
         n = random.choice(common_divisors)
-        expressions.append(generate_reciprocal_expression(n))
+        expressions.append(generate_reciprocal_expression(n, include_negative))
     return expressions
 
 
 def convert_division_to_multiplication(expression):
     """
-    Convert division expression to multiplication with reciprocal.
-    Example: '8/4' becomes '8*0.2' (since 1/4 = 0.25 ≈ 0.2 at 1 decimal)
+    Convert division expression to multiplication with reciprocal FRACTION.
+    Example: '8/4' becomes '8*(1/4)' - the model must recall that 1/4 = 0.25
+    This forces the model to use learned reciprocals from Stage 0.
     """
     # Handle simple division (e.g., '8/4')
     if '/' in expression and expression.count('/') == 1:
@@ -45,8 +61,8 @@ def convert_division_to_multiplication(expression):
                 numerator = parts[0].strip()
                 denominator = int(parts[1].strip())
                 if 1 <= denominator <= 100:
-                    reciprocal = RECIPROCAL_TABLE[denominator]
-                    return f"{numerator}*{reciprocal:.1f}"
+                    # Return as fraction, not decimal!
+                    return f"{numerator}*(1/{denominator})"
             except:
                 pass
     return expression
@@ -81,19 +97,39 @@ def safe_decode(l, itos):
     return ''.join(result)
 
 
-def generate_random_expression(num_digits=1, max_terms=3, max_value=10, operators=['+'], use_reciprocal_for_division=False):
-    """Generate a random math expression on-the-fly with proper decimal handling for division"""
+def generate_random_expression(num_digits=1, max_terms=3, max_value=10, operators=['+'], use_reciprocal_for_division=False, include_negative=False, simple_negatives_only=False):
+    """Generate a random math expression on-the-fly with proper decimal handling for division
+    If include_negative, 20% of expressions will start with a negative number
+    If simple_negatives_only, ALWAYS generates -X*Y where X,Y are 1-10 (ignores other settings)
+    """
+    # Simple negatives mode: -1*1 through -10*10
+    if simple_negatives_only:
+        first_num = random.randint(1, 10)
+        second_num = random.randint(1, 10)
+        expression = f"-{first_num}*{second_num}"
+        answer = -first_num * second_num
+        answer_str = f"{float(answer):.1f}"
+        return f"{expression}={answer_str}"
+    
     num_terms = random.randint(2, max_terms)
+    
+    # 20% chance to start with negative number if enabled
+    use_negative_start = include_negative and random.random() < 0.2
     
     # Determine min value based on digits
     min_val = 1 if num_digits == 1 else 10
     actual_max = max_value if max_value > 1 else (9 if num_digits == 1 else 99)
     
-    # Generate first number
+    # Generate first number (possibly negative)
     if num_digits == 1:
-        expression = str(random.randint(min_val, actual_max))
+        first_num = random.randint(min_val, actual_max)
     else:
-        expression = str(random.randint(10**(num_digits-1), actual_max))
+        first_num = random.randint(10**(num_digits-1), actual_max)
+    
+    if use_negative_start:
+        expression = f"-{first_num}"
+    else:
+        expression = str(first_num)
     
     # Add remaining terms
     for _ in range(num_terms - 1):
@@ -216,7 +252,7 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
     """
     stages = []
     
-    # STAGE 0: Learn reciprocals first (Foundation)
+    # STAGE 0: Learn reciprocals first (Foundation) - includes some negatives
     stages.append({
         'name': '0_Reciprocals',
         'operators': ['reciprocal'],  # Special marker
@@ -224,8 +260,9 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'max_value': 100,
         'max_terms': 2,
         'accuracy_threshold': 0.95,
-        'description': 'Learn all reciprocals: 1/n for n=1 to 100 (1 decimal place)',
-        'is_reciprocal_stage': True
+        'description': 'Learn reciprocals including negative ones: 1/n, -1/n (2 decimals)',
+        'is_reciprocal_stage': True,
+        'include_negative': True  # 20% negative reciprocals
     })
     
     # PHASE 1: Single-digit operations (now using reciprocals for division)
@@ -235,19 +272,43 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'num_digits': 1,
         'max_value': 9,
         'max_terms': 2,
-        'accuracy_threshold': 0.90,
+        'accuracy_threshold': 0.99,
         'description': 'Division as multiplication with reciprocals (e.g., 8/4 → 8*0.2)',
         'use_reciprocal_for_division': True
     })
     
     stages.append({
-        'name': '2_Multiplication_1digit',
+        'name': '2_Multiplication_1digit - positive only',
         'operators': ['*'],
         'num_digits': 1,
         'max_value': 9,
         'max_terms': 2,
         'accuracy_threshold': 0.95,
-        'description': 'Master multiplication (e.g., 7*8=56)'
+        'description': 'Master multiplication positive only (e.g., 7*8=56)',
+        'include_negative': False  # No negatives yet
+    })
+    
+    ## Intermediate stage to only do simple negatives before mixing
+    stages.append({
+        'name': '2b_Simple_Negatives',
+        'operators': ['*'],
+        'num_digits': 1,
+        'max_value': 10,
+        'max_terms': 2,
+        'accuracy_threshold': 0.95,
+        'description': 'Simple negative multiplication: -1*1 through -10*10',
+        'simple_negatives_only': True  # Special mode for simple negatives
+    })
+    
+    stages.append({
+        'name': '2_Multiplication_1digit - mixed negatives',
+        'operators': ['*'],
+        'num_digits': 1,
+        'max_value': 9,
+        'max_terms': 2,
+        'accuracy_threshold': 0.95,
+        'description': 'Master multiplication including negatives (e.g., -7*8=-56)',
+        'include_negative': True  # 20% start with negative
     })
     
     stages.append({
@@ -257,7 +318,8 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'max_value': 9,
         'max_terms': 3,
         'accuracy_threshold': 0.95,
-        'description': 'Master addition (e.g., 5+3+2=10)'
+        'description': 'Master addition including negatives (e.g., -5+3+2=0)',
+        'include_negative': True  # 20% start with negative
     })
     
     stages.append({
@@ -271,88 +333,88 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
     })
     
     stages.append({
-        'name': '5_Mult_Div_Mixed_1digit',
+        'name': '5_Mult_Div_Mixed_2digit',
         'operators': ['*', '/'],
-        'num_digits': 1,
-        'max_value': 9,
+        'num_digits': 2,
+        'max_value': 99,
         'max_terms': 2,
-        'accuracy_threshold': 0.88,
-        'description': 'Combine multiplication and division',
-        'use_reciprocal_for_division': True
+        'accuracy_threshold': 0.5,
+        'description': 'Combine multiplication and division with 2-digit numbers (convert / to * with reciprocals)',
+        'use_reciprocal_for_division': True  # CRITICAL: Convert division to multiplication
     })
     
     stages.append({
-        'name': '6_Add_Sub_Mixed_1digit',
+        'name': '6_Add_Sub_Mixed_2digit',
         'operators': ['+', '-'],
-        'num_digits': 1,
-        'max_value': 9,
+        'num_digits': 2,
+        'max_value': 99,
         'max_terms': 3,
-        'accuracy_threshold': 0.92,
-        'description': 'Combine addition and subtraction'
+        'accuracy_threshold': 0.95,
+        'description': 'Combine addition and subtraction with 2-digit numbers'
     })
     
     stages.append({
-        'name': '7_All_Ops_1digit',
+        'name': '7_All_Ops_2digit',
         'operators': ['+', '-', '*', '/'],
-        'num_digits': 1,
-        'max_value': 9,
+        'num_digits': 2,
+        'max_value': 99,
         'max_terms': 3,
-        'accuracy_threshold': 0.85,
-        'description': 'All operations mixed (1-digit)',
+        'accuracy_threshold': 0.5,
+        'description': 'All operations mixed with 2-digit numbers - rigorous training (CRITICAL STAGE)',
         'use_reciprocal_for_division': True
     })
     
-    # PHASE 2: Two-digit operations (same progression)
+    # PHASE 2: Advanced 2-digit operations with more terms
     stages.append({
-        'name': '8_Division_2digit',
+        'name': '8_Division_2digit_Advanced',
         'operators': ['/'],
         'num_digits': 2,
         'max_value': 99,
-        'max_terms': 2,
-        'accuracy_threshold': 0.85,
-        'description': 'Two-digit division (e.g., 84/7 → 84*0.1)',
+        'max_terms': 3,
+        'accuracy_threshold': 0.4,
+        'description': 'Advanced 2-digit division with multiple terms (e.g., 84/7 → 84*0.14)',
         'use_reciprocal_for_division': True
     })
     
     stages.append({
-        'name': '9_Multiplication_2digit',
+        'name': '9_Multiplication_2digit_Advanced',
         'operators': ['*'],
         'num_digits': 2,
         'max_value': 99,
-        'max_terms': 2,
-        'accuracy_threshold': 0.90,
-        'description': 'Two-digit multiplication (e.g., 12*8=96)'
+        'max_terms': 3,
+        'accuracy_threshold': 0.8,
+        'description': 'Advanced 2-digit multiplication with multiple terms (e.g., 12*8*2)'
     })
     
     stages.append({
-        'name': '10_Addition_2digit',
+        'name': '10_Addition_2digit_Advanced',
         'operators': ['+'],
         'num_digits': 2,
         'max_value': 99,
-        'max_terms': 3,
-        'accuracy_threshold': 0.92,
-        'description': 'Two-digit addition (e.g., 45+38+12=95)'
+        'max_terms': 4,
+        'accuracy_threshold': 0.9,
+        'description': 'Advanced 2-digit addition with more terms (e.g., 45+38+12+5)'
     })
     
     stages.append({
-        'name': '11_Subtraction_2digit',
+        'name': '11_Subtraction_2digit_Advanced',
         'operators': ['-'],
         'num_digits': 2,
         'max_value': 99,
-        'max_terms': 3,
-        'accuracy_threshold': 0.90,
-        'description': 'Two-digit subtraction (e.g., 78-23-15=40)'
+        'max_terms': 4,
+        'accuracy_threshold': 0.9,
+        'description': 'Advanced 2-digit subtraction with more terms (e.g., 78-23-15-5)'
     })
     
     stages.append({
-        'name': '12_All_Ops_2digit',
+        'name': '12_All_Ops_2digit_Master',
         'operators': ['+', '-', '*', '/'],
         'num_digits': 2,
         'max_value': 99,
-        'max_terms': 3,
-        'accuracy_threshold': 0.80,
-        'description': 'All operations mixed (2-digit)',
-        'use_reciprocal_for_division': True
+        'max_terms': 4,
+        'accuracy_threshold': 0.5,
+        'description': 'Master all operations with 2-digit numbers and multiple terms',
+        'use_reciprocal_for_division': True  # CRITICAL: Convert division to multiplication
     })
     
     return stages
@@ -370,15 +432,20 @@ def get_batch(split, batch_size, block_size, curriculum_config, val_expressions,
             if curriculum_config.get('is_reciprocal_stage', False):
                 # Generate reciprocal expressions
                 n = random.randint(1, 100)
-                expression_str = generate_reciprocal_expression(n)
+                include_neg = curriculum_config.get('include_negative', False)
+                expression_str = generate_reciprocal_expression(n, include_neg)
             else:
                 use_reciprocal = curriculum_config.get('use_reciprocal_for_division', False)
+                include_neg = curriculum_config.get('include_negative', False)
+                simple_neg = curriculum_config.get('simple_negatives_only', False)
                 expression_str = generate_random_expression(
                     num_digits=curriculum_config['num_digits'],
                     max_terms=curriculum_config['max_terms'],
                     max_value=curriculum_config['max_value'],
                     operators=curriculum_config['operators'],
-                    use_reciprocal_for_division=use_reciprocal
+                    use_reciprocal_for_division=use_reciprocal,
+                    include_negative=include_neg,
+                    simple_negatives_only=simple_neg
                 )
         else:  # split == 'val'
             expr_idx = random.randint(0, len(val_expressions) - 1)
@@ -386,12 +453,6 @@ def get_batch(split, batch_size, block_size, curriculum_config, val_expressions,
         
         expression = expression_str + '\n'
         encoded_expr = encode(expression)
-        
-        # Validate encoded tokens
-        for token_idx in encoded_expr:
-            if token_idx >= vocab_size or token_idx < 0:
-                print(f"ERROR: Token index {token_idx} is out of bounds [0, {vocab_size-1}]")
-                raise ValueError(f"Invalid token index {token_idx}")
         
         # Ensure minimum length for training
         if len(encoded_expr) < 2:
@@ -413,23 +474,9 @@ def get_batch(split, batch_size, block_size, curriculum_config, val_expressions,
         batch_x.append(x)
         batch_y.append(y)
     
-    # Final validation before creating tensors
-    for batch_idx, (x_seq, y_seq) in enumerate(zip(batch_x, batch_y)):
-        for seq_idx, token_idx in enumerate(x_seq + y_seq):
-            if token_idx >= vocab_size or token_idx < 0:
-                print(f"ERROR: In batch {batch_idx}, sequence position {seq_idx}, token index {token_idx} is out of bounds")
-                raise ValueError(f"Invalid token index {token_idx} in batch")
-    
+    # Create tensors directly (removed expensive per-token validation)
     x = torch.tensor(batch_x, dtype=torch.long, device=device)
     y = torch.tensor(batch_y, dtype=torch.long, device=device)
-    
-    # Validate tensor dimensions
-    if x.max().item() >= vocab_size:
-        print(f"ERROR: x tensor contains index {x.max().item()} >= vocab_size {vocab_size}")
-        raise ValueError("Invalid tensor indices")
-    if y.max().item() >= vocab_size:
-        print(f"ERROR: y tensor contains index {y.max().item()} >= vocab_size {vocab_size}")
-        raise ValueError("Invalid tensor indices")
     
     return x, y
 
@@ -446,32 +493,90 @@ def update_validation_set(curriculum_config, val_set_size):
     # Check if this is reciprocal stage
     is_reciprocal = curriculum_config.get('is_reciprocal_stage', False)
     use_reciprocal = curriculum_config.get('use_reciprocal_for_division', False)
+    include_negative = curriculum_config.get('include_negative', False)
+    simple_negatives = curriculum_config.get('simple_negatives_only', False)
+    operators = curriculum_config['operators']
     
     if is_reciprocal:
-        print(f"Mode: RECIPROCAL LEARNING (1/1 to 1/100)")
+        neg_status = "with negatives" if include_negative else "positive only"
+        print(f"Mode: RECIPROCAL LEARNING (1/1 to 1/100, {neg_status})")
     elif use_reciprocal:
         print(f"Mode: DIVISION AS MULTIPLICATION (using reciprocals)")
+    elif simple_negatives:
+        print(f"Mode: SIMPLE NEGATIVES ONLY (-1*1 through -10*10)")
+    
+    if include_negative and not is_reciprocal and not simple_negatives:
+        print(f"Mode: INCLUDING NEGATIVE NUMBERS (20% chance)")
+    
+    # For mixed operator stages, ensure balanced distribution
+    if len(operators) > 1 and not is_reciprocal:
+        print(f"Mode: MIXED OPERATORS - Ensuring balanced distribution")
+        exprs_per_op = val_set_size // len(operators)
+        remainder = val_set_size % len(operators)
+        print(f"  Target: {exprs_per_op} expressions per operator ({operators})")
     
     print(f"\nFirst 10 validation expressions:")
     
-    for i in range(val_set_size):
-        if is_reciprocal:
-            # Generate reciprocals
+    if is_reciprocal:
+        # Generate reciprocals normally
+        for i in range(val_set_size):
             n = random.randint(1, 100)
-            expr = generate_reciprocal_expression(n)
-        else:
+            expr = generate_reciprocal_expression(n, include_negative)
+            val_expressions.append(expr)
+            if i < 10:
+                print(f"  {i+1:2d}. {expr}")
+    
+    elif len(operators) > 1:
+        # Mixed operators - ensure balanced distribution
+        exprs_per_op = val_set_size // len(operators)
+        remainder = val_set_size % len(operators)
+        
+        # Track original operators before conversion
+        op_tracking = {op: 0 for op in operators}
+        
+        for op_idx, op in enumerate(operators):
+            count = exprs_per_op + (1 if op_idx < remainder else 0)
+            for i in range(count):
+                expr = generate_random_expression(
+                    num_digits=curriculum_config['num_digits'],
+                    max_terms=curriculum_config['max_terms'],
+                    max_value=curriculum_config['max_value'],
+                    operators=[op],  # Force this specific operator
+                    use_reciprocal_for_division=use_reciprocal,
+                    include_negative=include_negative,
+                    simple_negatives_only=simple_negatives
+                )
+                val_expressions.append(expr)
+                op_tracking[op] += 1
+                if len(val_expressions) <= 10:
+                    print(f"  {len(val_expressions):2d}. {expr}")
+    
+    else:
+        # Single operator - generate normally
+        for i in range(val_set_size):
             expr = generate_random_expression(
                 num_digits=curriculum_config['num_digits'],
                 max_terms=curriculum_config['max_terms'],
                 max_value=curriculum_config['max_value'],
                 operators=curriculum_config['operators'],
-                use_reciprocal_for_division=use_reciprocal
+                use_reciprocal_for_division=use_reciprocal,
+                include_negative=include_negative,
+                simple_negatives_only=simple_negatives
             )
-        val_expressions.append(expr)
-        
-        # Print first 10 for verification
-        if i < 10:
-            print(f"  {i+1:2d}. {expr}")
+            val_expressions.append(expr)
+            if i < 10:
+                print(f"  {i+1:2d}. {expr}")
+    
+    # Shuffle to mix operators
+    random.shuffle(val_expressions)
+    
+    # Display operator distribution for mixed operator stages
+    if not is_reciprocal and len(operators) > 1 and 'op_tracking' in locals():
+        print(f"\\nOperator distribution in validation set (original operators):")
+        for op in operators:
+            count = op_tracking[op]
+            conversion_note = " (converted to * with reciprocals)" if op == '/' and use_reciprocal else ""
+            print(f"  {op}: {count} expressions ({count/len(val_expressions)*100:.1f}%){conversion_note}")
     
     print(f"\n✅ Validation set ready: {len(val_expressions)} expressions")
     print(f"{'='*70}\n")

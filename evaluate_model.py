@@ -3,9 +3,15 @@ import torch.nn as nn
 from torch.nn import functional as F
 import os
 import glob
+import sys
 from datetime import datetime
 
-# Model architecture classes (same as training script)
+# Import model from src directory
+sys.path.insert(0, 'src')
+from model import GPTLanguageModel
+from data import convert_division_to_multiplication
+
+# Legacy Head class for compatibility (not used with new models)
 class Head(nn.Module):
     """ one head of self-attention """
     def __init__(self, head_size, n_embd, block_size, dropout):
@@ -70,66 +76,27 @@ class Block(nn.Module):
         x = x + self.ffwd(self.ln2(x))
         return x
 
-class GPTLanguageModel(nn.Module):
-    def __init__(self, vocab_size, n_embd, block_size, n_head, n_layer, dropout, device):
-        super().__init__()
-        self.block_size = block_size
-        self.device = device
-        
-        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
-        self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        self.blocks = nn.Sequential(*[Block(n_embd, n_head, dropout, block_size) for _ in range(n_layer)])
-        self.ln_f = nn.LayerNorm(n_embd)
-        self.lm_head = nn.Linear(n_embd, vocab_size)
 
-        self.apply(self._init_weights)
+def generate_math_answer(model, expression, encode, decode, itos, device, max_new_tokens=50):
+    """Generate answer for a math expression until newline"""
+    expression = expression + "="
+    context = torch.tensor(encode(expression), dtype=torch.long, device=device).unsqueeze(0)
+    generated = context
+    
+    for _ in range(max_new_tokens):
+        # Crop to block_size if needed
+        idx_cond = generated[:, -model.block_size:]
+        logits, _ = model(idx_cond)
+        logits = logits[:, -1, :]
+        probs = F.softmax(logits, dim=-1)
+        next_token = torch.multinomial(probs, num_samples=1)
+        generated = torch.cat((generated, next_token), dim=1)
+        if itos[next_token.item()] == '\n':
+            break
+    
+    answer = decode(generated[0].tolist())
+    return answer
 
-    def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-
-    def forward(self, idx, targets=None):
-        B, T = idx.shape
-        tok_emb = self.token_embedding_table(idx)
-        pos_emb = self.position_embedding_table(torch.arange(T, device=self.device))
-        x = tok_emb + pos_emb
-        x = self.blocks(x)
-        x = self.ln_f(x)
-        logits = self.lm_head(x)
-
-        if targets is None:
-            loss = None
-        else:
-            B, T, C = logits.shape
-            logits = logits.view(B*T, C)
-            targets = targets.view(B*T)
-            loss = F.cross_entropy(logits, targets)
-
-        return logits, loss
-
-    def generate_math_answer(self, expression, encode, decode, itos, max_new_tokens=50):
-        """Generate answer for a math expression until newline"""
-        expression = expression + "="
-        context = torch.tensor(encode(expression), dtype=torch.long, device=self.device).unsqueeze(0)
-        generated = context
-        
-        for _ in range(max_new_tokens):
-            # Crop to block_size if needed
-            idx_cond = generated[:, -self.block_size:]
-            logits, _ = self(idx_cond)
-            logits = logits[:, -1, :]
-            probs = F.softmax(logits, dim=-1)
-            next_token = torch.multinomial(probs, num_samples=1)
-            generated = torch.cat((generated, next_token), dim=1)
-            if itos[next_token.item()] == '\\n':
-                break
-        
-        answer = decode(generated[0].tolist())
-        return answer
 
 def load_model(model_path):
     """Load a saved model and return model, vocab info"""
@@ -139,7 +106,7 @@ def load_model(model_path):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     # Load checkpoint
-    checkpoint = torch.load(model_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     
     # Extract model parameters
     vocab_size = checkpoint['vocab_size']
@@ -157,8 +124,24 @@ def load_model(model_path):
     # Get embedding dimension from token embedding table
     n_embd = state_dict['token_embedding_table.weight'].shape[1]
     
-    # Get block size from position embedding table
-    block_size = state_dict['position_embedding_table.weight'].shape[0]
+    # Get block size - try multiple sources (different model versions)
+    if 'block_size' in checkpoint:
+        # Directly saved in checkpoint (preferred)
+        block_size = checkpoint['block_size']
+    elif 'position_embedding_table.weight' in state_dict:
+        # Old architecture with learned positional embeddings
+        block_size = state_dict['position_embedding_table.weight'].shape[0]
+    else:
+        # New architecture with Abacus embeddings - infer from tril buffer size
+        # Find any tril buffer in the state dict
+        tril_key = next((k for k in state_dict.keys() if 'tril' in k), None)
+        if tril_key:
+            block_size = state_dict[tril_key].shape[0]
+            print(f"  ℹ️  Inferred block_size from {tril_key}: {block_size}")
+        else:
+            # Last resort - default to 128
+            block_size = 128
+            print(f"  ⚠️  Could not infer block_size, using default: {block_size}")
     
     # Get number of heads by counting attention head modules
     n_head = len([k for k in state_dict.keys() if 'blocks.0.sa.heads.' in k and '.key.weight' in k])
@@ -176,9 +159,18 @@ def load_model(model_path):
     print(f"- n_layer: {n_layer}")
     print(f"- dropout: {dropout}")
     
-    # Create model with inferred hyperparameters
-    model = GPTLanguageModel(vocab_size, n_embd, block_size, n_head, n_layer, dropout, device)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    # Create model with inferred hyperparameters (new architecture requires stoi)
+    model = GPTLanguageModel(vocab_size, n_embd, n_head, n_layer, block_size, dropout, device, stoi)
+    
+    # Load state dict with strict=False to ignore cached attributes like _invalid_answer_mask
+    missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+    
+    if unexpected_keys:
+        # Filter out expected cached attributes
+        unexpected_keys = [k for k in unexpected_keys if not k.startswith('_')]
+        if unexpected_keys:
+            print(f"  ⚠️  Unexpected keys in checkpoint: {unexpected_keys}")
+    
     model.to(device)
     model.eval()
     
@@ -196,23 +188,36 @@ def load_model(model_path):
     
     return model, encode, decode, itos, device
 
-def evaluate_expressions(model, encode, decode, itos, expressions):
+def evaluate_expressions(model, encode, decode, itos, device, expressions, use_reciprocal=False):
     """Evaluate model on a list of expressions"""
-    print(f"\\n=== Evaluating {len(expressions)} expressions ===")
+    print(f"\n=== Evaluating {len(expressions)} expressions ===")
+    if use_reciprocal:
+        print("(Division will be converted to multiplication with reciprocals)")
     
     correct = 0
     results = []
     
     for expr in expressions:
         try:
+            # Convert division if needed
+            test_expr = convert_division_to_multiplication(expr) if (use_reciprocal and '/' in expr) else expr
+            
             # Generate answer
-            generated = model.generate_math_answer(expr, encode, decode, itos)
+            generated = generate_math_answer(model, test_expr, encode, decode, itos, device)
             
             # Extract generated answer
             if '=' in generated:
-                generated_answer = generated.split('=')[1].strip().replace('\\n', '')
-                correct_answer = str(float(eval(expr)))
-                is_correct = generated_answer == correct_answer
+                generated_answer = generated.split('=')[1].strip().replace('\n', '')
+                # Compute expected answer from the converted expression (for reciprocals)
+                expected_value = float(eval(test_expr))
+                correct_answer = f"{expected_value:.1f}"
+                
+                # Normalize both answers for comparison
+                try:
+                    gen_val = float(generated_answer)
+                    is_correct = abs(gen_val - expected_value) < 0.01
+                except ValueError:
+                    is_correct = False
                 
                 if is_correct:
                     correct += 1
@@ -227,20 +232,26 @@ def evaluate_expressions(model, encode, decode, itos, expressions):
                     'is_correct': is_correct
                 })
             else:
+                expected_value = float(eval(test_expr))
                 print(f"✗ {expr} = MALFORMED: {generated.strip()}")
                 results.append({
                     'expression': expr,
                     'generated': 'MALFORMED',
-                    'correct': str(float(eval(expr))),
+                    'correct': f"{expected_value:.1f}",
                     'is_correct': False
                 })
                 
         except Exception as e:
+            try:
+                expected_value = float(eval(test_expr))
+                correct_val = f"{expected_value:.1f}"
+            except:
+                correct_val = 'N/A'
             print(f"✗ {expr} = ERROR: {str(e)}")
             results.append({
                 'expression': expr,
                 'generated': 'ERROR',
-                'correct': str(float(eval(expr))),
+                'correct': correct_val,
                 'is_correct': False
             })
     
@@ -249,27 +260,37 @@ def evaluate_expressions(model, encode, decode, itos, expressions):
     
     return accuracy, results
 
-def interactive_mode(model, encode, decode, itos):
+def interactive_mode(model, encode, decode, itos, device, use_reciprocal=False):
     """Interactive mode for user input"""
-    print("\\n=== Interactive Mode ===")
+    print(f"\n{'='*70}")
+    print("=== Interactive Mode ===")
     print("Enter math expressions to test the model (or 'exit' to quit)")
+    if use_reciprocal:
+        print("⚠️  Note: Division is converted to multiplication with reciprocals")
+    print(f"{'='*70}\n")
     
     while True:
-        user_input = input("\\nExpression: ").strip()
+        user_input = input("Enter a math expression (or 'exit' to quit): ").strip()
         if user_input.lower() in ['exit', 'quit', 'q']:
             break
         
         if user_input:
             try:
-                generated = model.generate_math_answer(user_input, encode, decode, itos)
-                print(f"AI Answer: {generated.strip()}")
+                # Convert division if using reciprocals
+                test_expr = user_input
+                if use_reciprocal and '/' in user_input:
+                    test_expr = convert_division_to_multiplication(user_input)
+                    print(f"  [Converted to: {test_expr}]")
                 
-                # Show correct answer for comparison
+                generated = generate_math_answer(model, test_expr, encode, decode, itos, device)
+                print(f"AI-generated answer: {generated.strip()}")
+                
+                # Show expected answer for comparison
                 try:
-                    correct_answer = eval(user_input)
-                    print(f"Correct Answer: {user_input}={correct_answer}")
+                    expected = eval(test_expr)
+                    print(f"Expected: {user_input}={expected:.1f}\n")
                 except:
-                    print("Could not compute correct answer")
+                    print()
                     
             except Exception as e:
                 print(f"Error: {e}")
@@ -277,10 +298,23 @@ def interactive_mode(model, encode, decode, itos):
 def main():
     print("=== MathGPT Model Evaluator ===")
     
-    # Find available models
-    model_dirs = glob.glob("runs/models/divi*")
+    # Find available models in multiple directories
+    model_dirs = []
+    for search_path in [
+        "models/mathgpt_*",
+        "models/reciprocal_*",
+        "runs/models/*"
+    ]:
+        model_dirs.extend(glob.glob(search_path))
+    
+    # Remove duplicates and sort
+    model_dirs = sorted(list(set(model_dirs)))
+    
     if not model_dirs:
-        print("No models found in 'models/' directory!")
+        print("No models found! Searched in:")
+        print("  - models/mathgpt_*")
+        print("  - models/reciprocal_*")
+        print("  - runs/models/*")
         return
     
     print("\\nAvailable models:")
@@ -304,12 +338,11 @@ def main():
         print("Invalid choice!")
         return
     
-    # Choose specific model file
+    # Choose specific model file - scan for ALL .pt files
     available_files = []
-    for filename in ['best_model.pt', 'best_accuracy_model.pt', 'final_model.pt']:
-        filepath = os.path.join(selected_dir, filename)
-        if os.path.exists(filepath):
-            available_files.append((filename, filepath))
+    for filepath in sorted(glob.glob(os.path.join(selected_dir, '*.pt'))):
+        filename = os.path.basename(filepath)
+        available_files.append((filename, filepath))
     
     if not available_files:
         print("No model files found in selected directory!")
@@ -328,6 +361,10 @@ def main():
     
     # Load model
     model, encode, decode, itos, device = load_model(selected_file)
+    
+    # Check if model uses reciprocal conversion (for division stages)
+    use_reciprocal = input("\nDoes this model use reciprocal conversion for division? (y/n, default=y): ").strip().lower()
+    use_reciprocal = use_reciprocal != 'n'  # Default to yes
     
     # Test expressions
     test_sets = {
@@ -356,8 +393,8 @@ def main():
         overall_total = 0
         
         for set_name, expressions in test_sets.items():
-            print(f"\\n--- Testing {set_name} ---")
-            accuracy, results = evaluate_expressions(model, encode, decode, itos, expressions)
+            print(f"\n--- Testing {set_name} ---")
+            accuracy, results = evaluate_expressions(model, encode, decode, itos, device, expressions, use_reciprocal)
             overall_correct += sum(1 for r in results if r['is_correct'])
             overall_total += len(results)
         
@@ -375,13 +412,13 @@ def main():
             set_choice = int(input("Select test set (number): ")) - 1
             selected_set = set_names[set_choice]
             expressions = test_sets[selected_set]
-            evaluate_expressions(model, encode, decode, itos, expressions)
+            evaluate_expressions(model, encode, decode, itos, device, expressions, use_reciprocal)
         except (ValueError, IndexError):
             print("Invalid choice!")
             
     elif eval_choice == 3:
         # Interactive mode
-        interactive_mode(model, encode, decode, itos)
+        interactive_mode(model, encode, decode, itos, device, use_reciprocal)
         
     elif eval_choice == 4:
         # Custom expressions
@@ -389,7 +426,7 @@ def main():
         custom_input = input("Expressions: ")
         expressions = [expr.strip() for expr in custom_input.split(',') if expr.strip()]
         if expressions:
-            evaluate_expressions(model, encode, decode, itos, expressions)
+            evaluate_expressions(model, encode, decode, itos, device, expressions, use_reciprocal)
         else:
             print("No valid expressions provided!")
 
