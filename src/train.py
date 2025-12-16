@@ -1,12 +1,5 @@
 """
 Training script for MathGPT with curriculum learning
-
-Features:
-- Curriculum learning with 15 stages (reciprocals → 1-digit → 2-digit operations)
-- Stage-based tolerance: Stages 8+ allow ±1 error for division rounding
-- Checkpoint loading: Set CHECKPOINT_PATH to resume from a saved model
-- Answer masking: Prevents invalid tokens (+, *, /, =) in answers during generation
-- Fast & full evaluation modes for efficient training
 """
 import torch
 import torch.nn as nn
@@ -44,9 +37,6 @@ dropout = 0.2
 FAST_MODE = True  # Skip expensive per-iteration evaluations
 EVAL_SUBSET_SIZE = 30  # Evaluate on subset of expressions for speed
 DISABLE_ANSWER_MASKING = False  # Set to True if model struggles to learn
-# To resume training from a checkpoint, set path to a .pt file:
-# Example: CHECKPOINT_PATH = 'runs/models/reciprocal_curriculum_.../stage_3_2b_Simple_Negatives_completed.pt'
-CHECKPOINT_PATH =  "/root/Math-GPT/runs/models/reciprocal_curriculum_lr0.0001_emb128_h8_l6_20251215_225258/stage_7_5_Mult_Div_Mixed_2digit_best_loss.pt" # Path to .pt file to resume training
 
 torch.manual_seed(1337)
 random.seed(1337)
@@ -76,8 +66,6 @@ curriculum_config = {
     'accuracy_threshold': curriculum_stages[0].get('accuracy_threshold', 0.95),
     'is_reciprocal_stage': curriculum_stages[0].get('is_reciprocal_stage', False),
     'use_reciprocal_for_division': curriculum_stages[0].get('use_reciprocal_for_division', False),
-    'include_negative': curriculum_stages[0].get('include_negative', False),
-    'simple_negatives_only': curriculum_stages[0].get('simple_negatives_only', False),
 }
 
 current_stage = 0
@@ -123,12 +111,11 @@ def estimate_loss(model):
     return out
 
 
-def fast_evaluate_subset(model, expressions, max_samples=30, debug=False, stage_index=0):
+def fast_evaluate_subset(model, expressions, max_samples=30, debug=False):
     """Quick evaluation on subset of expressions - much faster than full evaluation"""
     model.eval()
     correct = 0
     total = min(len(expressions), max_samples)
-    mismatches = []  # Track first few mismatches to show
     
     if debug:
         print(f"\n  DEBUG: Fast eval on {total} expressions")
@@ -149,12 +136,11 @@ def fast_evaluate_subset(model, expressions, max_samples=30, debug=False, stage_
                 generated_answer = generated.split('=')[1].strip().replace('\n', '')
                 generated_normalized = normalize_answer(generated_answer)
                 expected_normalized = normalize_answer(expected)
-                is_correct = check_answer_correct(generated_normalized, expected_normalized, stage_index)
-                
+                is_correct = generated_normalized == expected_normalized
                 if is_correct:
                     correct += 1
-                elif len(mismatches) < 5:  # Collect first 5 mismatches
-                    mismatches.append((expr_input, generated_answer, expected))
+                else:
+                    print(f"    MISMATCH: {expr_input} | Generated: {generated_answer} | Expected: {expected}")
                 
                 if debug and i < 5:
                     status = "✓" if is_correct else "✗"
@@ -163,11 +149,6 @@ def fast_evaluate_subset(model, expressions, max_samples=30, debug=False, stage_
             if debug and i < 5:
                 print(f"    ✗ {expr} - ERROR: {e}")
             pass
-    
-    # Print first few mismatches for debugging
-    if mismatches and not debug:
-        for expr_input, generated_answer, expected in mismatches:
-            print(f"    MISMATCH: {expr_input} | Generated: {generated_answer} | Expected: {expected}")
     
     model.train()
     accuracy = correct / total if total > 0 else 0.0
@@ -188,51 +169,17 @@ def normalize_answer(ans_str):
         # ALWAYS format with 1 decimal place
         return f"{val:.1f}"
     except:
-        return ans_str
-
-
-def check_answer_correct(generated_normalized, expected_normalized, stage_index):
-    """Check if answer is correct with stage-based tolerance
-    
-    Args:
-        generated_normalized: Generated answer (normalized string)
-        expected_normalized: Expected answer (normalized string)
-        stage_index: Current curriculum stage (0-indexed)
-    
-    Returns:
-        bool: True if answer is correct (exact or within tolerance)
-    """
-    # Stages 8+ allow ±1 tolerance due to division rounding errors
-    if stage_index >= 8:
-        try:
-            gen_val = float(generated_normalized)
-            exp_val = float(expected_normalized)
-            # Accept if within ±1
-            return abs(gen_val - exp_val) <= 1.0
-        except:
-            return generated_normalized == expected_normalized
-    else:
-        # Stages 0-7: exact match required
-        return generated_normalized == expected_normalized
+        return ans_str.strip()
 
 
 @torch.no_grad()
-def old_normalize_answer_fallback(ans_str):
-    """Fallback when normalize fails"""
-    return ans_str.strip()
-
-
-@torch.no_grad()
-def evaluate_math_accuracy(model, current_stage, validation_expressions=None, track_details=False):
+def evaluate_math_accuracy(model, current_stage, validation_expressions=None):
     """Evaluate model accuracy on math expressions with per-operation breakdown
     
     Args:
         model: The model to evaluate
-        current_stage: Current curriculum stage index (0-indexed)
+        current_stage: Current curriculum stage index
         validation_expressions: Optional list of expressions to evaluate. If None, uses hardcoded test sets.
-        track_details: If False, skip building detailed operation_results (much faster)
-    
-    Note: Stages 8+ use ±1 tolerance for division rounding errors
     """
     model.eval()
     
@@ -307,7 +254,7 @@ def evaluate_math_accuracy(model, current_stage, validation_expressions=None, tr
         
         # For validation expressions, we evaluate them all as one category
         # since they're already filtered for the current stage
-        operation_results = {'current_stage': []} if track_details else {}
+        operation_results = {'current_stage': []}
         correct = 0
         total = len(expressions_to_test)
         
@@ -337,40 +284,37 @@ def evaluate_math_accuracy(model, current_stage, validation_expressions=None, tr
                     generated_answer = generated.split('=')[1].strip().replace('\n', '')
                     generated_normalized = normalize_answer(generated_answer)
                     expected_normalized = normalize_answer(expected)
-                    is_correct = check_answer_correct(generated_normalized, expected_normalized, current_stage)
+                    is_correct = generated_normalized == expected_normalized
                     
                     if is_correct:
                         correct += 1
                     
-                    if track_details:
-                        operation_results['current_stage'].append({
-                            'expression': expr_input,
-                            'tested_as': test_expr if test_expr != expr_input else None,
-                            'generated': generated_answer,
-                            'generated_normalized': generated_normalized,
-                            'correct': expected_normalized,
-                            'is_correct': is_correct
-                        })
-                else:
-                    if track_details:
-                        operation_results['current_stage'].append({
-                            'expression': expr_input,
-                            'tested_as': test_expr if test_expr != expr_input else None,
-                            'generated': 'MALFORMED',
-                            'generated_normalized': 'MALFORMED',
-                            'correct': expected,
-                            'is_correct': False
-                        })
-            except Exception as e:
-                if track_details:
                     operation_results['current_stage'].append({
-                        'expression': expr_input if '=' in expr else expr,
-                        'generated': 'ERROR',
-                        'generated_normalized': 'ERROR',
-                        'correct': expected if 'expected' in locals() else 'N/A',
-                        'is_correct': False,
-                        'error': str(e)
+                        'expression': expr_input,
+                        'tested_as': test_expr if test_expr != expr_input else None,
+                        'generated': generated_answer,
+                        'generated_normalized': generated_normalized,
+                        'correct': expected_normalized,
+                        'is_correct': is_correct
                     })
+                else:
+                    operation_results['current_stage'].append({
+                        'expression': expr_input,
+                        'tested_as': test_expr if test_expr != expr_input else None,
+                        'generated': 'MALFORMED',
+                        'generated_normalized': 'MALFORMED',
+                        'correct': expected,
+                        'is_correct': False
+                    })
+            except Exception as e:
+                operation_results['current_stage'].append({
+                    'expression': expr_input if '=' in expr else expr,
+                    'generated': 'ERROR',
+                    'generated_normalized': 'ERROR',
+                    'correct': expected if 'expected' in locals() else 'N/A',
+                    'is_correct': False,
+                    'error': str(e)
+                })
         
         accuracy = correct / total if total > 0 else 0
         operation_stats = {
@@ -517,8 +461,7 @@ def test_math_expressions(model, model_save_dir):
     """Test the model on sample math expressions with comprehensive per-operation analysis"""
     print("\n=== Final Math Expression Test ===")
     
-    # Final evaluation - keep detailed results for reporting
-    final_accuracy, operation_stats, operation_results = evaluate_math_accuracy(model, current_stage, val_expressions, track_details=True)
+    final_accuracy, operation_stats, operation_results = evaluate_math_accuracy(model, current_stage, val_expressions)
     
     print("\n" + "="*60)
     print("PERFORMANCE BY OPERATION")
@@ -602,46 +545,6 @@ def main():
     # Initialize model
     model = GPTLanguageModel(vocab_size, n_embd, n_head, n_layer, block_size, dropout, device, stoi)
     model = model.to(device)
-    
-    # Load checkpoint if specified
-    start_iter = 0
-    if CHECKPOINT_PATH and os.path.exists(CHECKPOINT_PATH):
-        print(f"\n{'='*70}")
-        print(f"LOADING CHECKPOINT: {CHECKPOINT_PATH}")
-        print(f"{'='*70}")
-        checkpoint = torch.load(CHECKPOINT_PATH, map_location=device, weights_only=False)
-        # Use strict=False to ignore cached mask buffers from previous runs
-        model.load_state_dict(checkpoint['model_state_dict'], strict=False)
-        print(f"✓ Model state loaded")
-        
-        # Load curriculum stage if available
-        if 'current_stage' in checkpoint:
-            current_stage = checkpoint['current_stage']
-            print(f"✓ Resuming from stage {current_stage}: {curriculum_stages[current_stage]['name']}")
-            
-            # Update curriculum config for resumed stage
-            stage_info = curriculum_stages[current_stage]
-            curriculum_config['operators'] = stage_info['operators']
-            curriculum_config['num_digits'] = stage_info['num_digits']
-            curriculum_config['max_value'] = stage_info['max_value']
-            curriculum_config['max_terms'] = stage_info.get('max_terms', 3)
-            curriculum_config['accuracy_threshold'] = stage_info.get('accuracy_threshold', 0.95)
-            curriculum_config['is_reciprocal_stage'] = stage_info.get('is_reciprocal_stage', False)
-            curriculum_config['use_reciprocal_for_division'] = stage_info.get('use_reciprocal_for_division', False)
-            curriculum_config['include_negative'] = stage_info.get('include_negative', False)
-            curriculum_config['simple_negatives_only'] = stage_info.get('simple_negatives_only', False)
-            
-            # Regenerate validation set for current stage
-            val_expressions = update_validation_set(curriculum_config, val_set_size)
-        
-        if 'iter' in checkpoint:
-            start_iter = checkpoint['iter']
-            print(f"✓ Resuming from iteration {start_iter}")
-        
-        print(f"{'='*70}\n")
-    elif CHECKPOINT_PATH:
-        print(f"⚠️  Checkpoint path specified but not found: {CHECKPOINT_PATH}")
-        print(f"   Starting from scratch...\n")
     
     # Optionally disable answer masking for faster/easier learning
     if DISABLE_ANSWER_MASKING:
@@ -729,7 +632,7 @@ def main():
     start_time = time.time()
     losses = {}
     
-    for iter in range(start_iter, max_iters):
+    for iter in range(max_iters):
         # Evaluate loss on train and val sets
         if iter % eval_interval == 0 or iter == max_iters - 1:
             losses = estimate_loss(model)
@@ -743,14 +646,13 @@ def main():
                 # Quick accuracy check on small subset
                 sample_exprs = val_expressions[:EVAL_SUBSET_SIZE]
                 # Disable debug for speed - only enable manually if needed
-                math_accuracy = fast_evaluate_subset(model, sample_exprs, EVAL_SUBSET_SIZE, debug=False, stage_index=current_stage)
+                math_accuracy = fast_evaluate_subset(model, sample_exprs, EVAL_SUBSET_SIZE, debug=False)
                 operation_stats = {}
                 operation_results = {}
             else:
                 # Full evaluation at milestones, for reciprocal stage, or first iteration
                 # Use the validation set for consistency with fast eval
-                # Skip detailed tracking during training for speed (only need accuracy)
-                math_accuracy, operation_stats, operation_results = evaluate_math_accuracy(model, current_stage, val_expressions, track_details=False)
+                math_accuracy, operation_stats, operation_results = evaluate_math_accuracy(model, current_stage, val_expressions)
             
             # Log metrics to TensorBoard (reduced frequency for speed)
             should_log_tensorboard = (iter % (eval_interval * 5) == 0) or iter == max_iters - 1 or is_milestone
@@ -930,8 +832,7 @@ def main():
                 # FORCE FULL EVALUATION before allowing progression (not just fast subset)
                 if FAST_MODE and operation_stats == {}:
                     print(f"\n  📊 Running FULL evaluation before stage progression...")
-                    # Skip detailed tracking - we only need the accuracy count
-                    math_accuracy, operation_stats, operation_results = evaluate_math_accuracy(model, current_stage, val_expressions, track_details=False)
+                    math_accuracy, operation_stats, operation_results = evaluate_math_accuracy(model, current_stage, val_expressions)
                     
                     # Recalculate accuracy with full evaluation
                     current_ops_correct = 0
@@ -947,6 +848,79 @@ def main():
                         print(f"  ⚠️  Full evaluation shows accuracy below threshold!")
                         print(f"      Fast subset was optimistic. Continuing training...\n")
                         continue
+                
+                # SANITY CHECK: Test operations from PREVIOUSLY MASTERED stages
+                # This prevents catastrophic forgetting
+                # Build sanity tests based on what stages have been completed
+                sanity_tests = []
+                
+                # Stage 0: Reciprocals - test a few reciprocals
+                if current_stage >= 0:
+                    sanity_tests.extend(['1/2', '1/4', '1/5'])
+                
+                # Stage 1: Division (1-digit) - only test if we've passed stage 1
+                if current_stage >= 1:
+                    sanity_tests.extend(['8/4', '6/2'])
+                
+                # Stage 2: Multiplication (1-digit) - only test if we've passed stage 2
+                if current_stage >= 2:
+                    sanity_tests.extend(['4*2', '3*3'])
+                
+                # Stage 3: Addition (1-digit) - only test if we've passed stage 3
+                if current_stage >= 3:
+                    sanity_tests.extend(['2+2', '5+5'])
+                
+                # Stage 4: Subtraction (1-digit) - only test if we've passed stage 4
+                if current_stage >= 4:
+                    sanity_tests.extend(['5-2', '9-3'])
+                
+                if not sanity_tests:
+                    # If stage 0, skip sanity check or just test current stage
+                    print(f"\n  ℹ️  Skipping sanity check (stage 0 - no previous stages to verify)\n")
+                else:
+                    print(f"\n  🔍 Sanity check: Testing {len(sanity_tests)} operations from previous stages...")
+                    sanity_pass = 0
+                    for test_expr in sanity_tests:
+                        # Convert division if needed (stages 0, 1 use reciprocals)
+                        test_as = test_expr
+                        if '/' in test_expr and current_stage <= 1:
+                            # For reciprocal stages, test as-is (1/n format)
+                            test_as = test_expr
+                        elif '/' in test_expr:
+                            # For later stages with division, convert to reciprocal
+                            test_as = convert_division_to_multiplication(test_expr)
+                        
+                        generated = model.generate_math_answer(test_as, encode, decode, itos)
+                        if '=' in generated:
+                            try:
+                                gen_ans_str = generated.split('=')[1].strip().replace('\n', '')
+                                gen_ans = float(gen_ans_str)
+                                expected = float(eval(test_as))
+                                if abs(gen_ans - expected) < 0.15:  # Allow small tolerance
+                                    sanity_pass += 1
+                                    status = "✓"
+                                else:
+                                    status = "✗"
+                                print(f"    {status} {test_expr} = {gen_ans:.1f} (expected: {expected:.1f})")
+                            except ValueError as e:
+                                # Show what was generated for debugging
+                                gen_output = generated.strip()
+                                print(f"    ✗ {test_expr} = PARSE ERROR: '{gen_output}' (can't convert to float)")
+                            except Exception as e:
+                                gen_output = generated.strip()
+                                print(f"    ✗ {test_expr} = ERROR: '{gen_output}' ({type(e).__name__})")
+                        else:
+                            print(f"    ✗ {test_expr} = MALFORMED: {generated.strip()}")
+                    
+                    # Require at least 80% pass rate on sanity check
+                    pass_rate = sanity_pass / len(sanity_tests)
+                    if pass_rate < 0.8:
+                        print(f"  ⚠️  SANITY CHECK FAILED: {sanity_pass}/{len(sanity_tests)} passed ({pass_rate:.0%})")
+                        print(f"  🛑 NOT progressing to next stage - model shows signs of degradation!")
+                        print(f"     Continuing training on current stage...\n")
+                        continue
+                    else:
+                        print(f"  ✓ Sanity check passed: {sanity_pass}/{len(sanity_tests)} ({pass_rate:.0%})\n")
                 
                 print(f"\n{'='*60}")
                 print(f"✓ CURRICULUM PROGRESSION: Stage {current_stage} '{stage_name}' mastered!")
@@ -993,7 +967,6 @@ def main():
                 curriculum_config['is_reciprocal_stage'] = next_stage_info.get('is_reciprocal_stage', False)
                 curriculum_config['use_reciprocal_for_division'] = next_stage_info.get('use_reciprocal_for_division', False)
                 curriculum_config['include_negative'] = next_stage_info.get('include_negative', False)
-                curriculum_config['simple_negatives_only'] = next_stage_info.get('simple_negatives_only', False)
                 
                 # Clear cached answer mask so it can be regenerated with new valid tokens if needed
                 if hasattr(model, '_invalid_answer_mask'):
