@@ -1,0 +1,257 @@
+{
+  "run_name": "reciprocal_curriculum_lr0.0001_emb128_h8_l6_20251219_135141",
+  "timestamp": "20251219_135141",
+  "curriculum_config": {
+    "num_digits": 1,
+    "max_terms": 2,
+    "max_value": 100,
+    "operators": [
+      "reciprocal"
+    ],
+    "accuracy_threshold": 0.95,
+    "is_reciprocal_stage": true,
+    "use_reciprocal_for_division": false,
+    "include_negative": true,
+    "simple_negatives_only": false
+  },
+  "curriculum_stages": [
+    {
+      "name": "0_Reciprocals",
+      "operators": [
+        "reciprocal"
+      ],
+      "num_digits": 1,
+      "max_value": 100,
+      "max_terms": 2,
+      "accuracy_threshold": 0.95,
+      "description": "Learn reciprocals including negative ones: 1/n, -1/n (4 decimals)",
+      "is_reciprocal_stage": true,
+      "include_negative": true
+    },
+    {
+      "name": "1_Division_1digit",
+      "operators": [
+        "/"
+      ],
+      "num_digits": 1,
+      "max_value": 9,
+      "max_terms": 2,
+      "accuracy_threshold": 0.99,
+      "description": "Division as multiplication with reciprocals (e.g., 8/4 \u2192 8*0.2)",
+      "use_reciprocal_for_division": true
+    },
+    {
+      "name": "2_Multiplication_1digit - positive only",
+      "operators": [
+        "*"
+      ],
+      "num_digits": 1,
+      "max_value": 9,
+      "max_terms": 2,
+      "accuracy_threshold": 0.95,
+      "description": "Master multiplication positive only (e.g., 7*8=56.0000)",
+      "include_negative": false
+    },
+    {
+      "name": "2b_Simple_Negatives",
+      "operators": [
+        "*"
+      ],
+      "num_digits": 1,
+      "max_value": 10,
+      "max_terms": 2,
+      "accuracy_threshold": 0.95,
+      "description": "Simple negative multiplication: -1*1 through -10*10",
+      "simple_negatives_only": true
+    },
+    {
+      "name": "2_Multiplication_1digit - mixed negatives",
+      "operators": [
+        "*"
+      ],
+      "num_digits": 1,
+      "max_value": 9,
+      "max_terms": 2,
+      "accuracy_threshold": 0.95,
+      "description": "Master multiplication including negatives (e.g., -7*8=-56)",
+      "include_negative": true
+    },
+    {
+      "name": "3_Addition_1digit",
+      "operators": [
+        "+"
+      ],
+      "num_digits": 1,
+      "max_value": 9,
+      "max_terms": 3,
+      "accuracy_threshold": 0.95,
+      "description": "Master addition including negatives (e.g., -5+3+2=0)",
+      "include_negative": true
+    },
+    {
+      "name": "4_Subtraction_1digit",
+      "operators": [
+        "-"
+      ],
+      "num_digits": 1,
+      "max_value": 9,
+      "max_terms": 3,
+      "accuracy_threshold": 0.95,
+      "description": "Master subtraction (e.g., 9-4-2=3)"
+    },
+    {
+      "name": "5a_Multiplication_2digit_Simple",
+      "operators": [
+        "*"
+      ],
+      "num_digits": 2,
+      "max_value": 99,
+      "max_terms": 2,
+      "accuracy_threshold": 0.9,
+      "description": "Master 2-digit multiplication first (e.g., 12*8=96.0000)"
+    },
+    {
+      "name": "5b_Division_2digit_Simple",
+      "operators": [
+        "/"
+      ],
+      "num_digits": 2,
+      "max_value": 99,
+      "max_terms": 2,
+      "accuracy_threshold": 0.7,
+      "description": "Master 2-digit division using reciprocals (e.g., 48/6 \u2192 48*0.1667)",
+      "use_reciprocal_for_division": true
+    },
+    {
+      "name": "5c_Mult_Div_Mixed_2digit",
+      "operators": [
+        "*",
+        "/"
+      ],
+      "num_digits": 2,
+      "max_value": 99,
+      "max_terms": 2,
+      "accuracy_threshold": 0.6,
+      "description": "Combine multiplication and division with 2-digit numbers (convert / to * with reciprocals)",
+      "use_reciprocal_for_division": true
+    },
+    {
+      "name": "6_Add_Sub_Mixed_2digit",
+      "operators": [
+        "+",
+        "-"
+      ],
+      "num_digits": 2,
+      "max_value": 99,
+      "max_terms": 3,
+      "accuracy_threshold": 0.95,
+      "description": "Combine addition and subtraction with 2-digit numbers"
+    },
+    {
+      "name": "7_All_Ops_2digit",
+      "operators": [
+        "+",
+        "-",
+        "*",
+        "/"
+      ],
+      "num_digits": 2,
+      "max_value": 99,
+      "max_terms": 3,
+      "accuracy_threshold": 0.5,
+      "description": "All operations mixed with 2-digit numbers - rigorous training (CRITICAL STAGE)",
+      "use_reciprocal_for_division": true
+    },
+    {
+      "name": "8_Division_2digit_Advanced",
+      "operators": [
+        "/"
+      ],
+      "num_digits": 2,
+      "max_value": 99,
+      "max_terms": 3,
+      "accuracy_threshold": 0.4,
+      "description": "Advanced 2-digit division with multiple terms (e.g., 84/7 \u2192 84*0.14)",
+      "use_reciprocal_for_division": true
+    },
+    {
+      "name": "9_Multiplication_2digit_Advanced",
+      "operators": [
+        "*"
+      ],
+      "num_digits": 2,
+      "max_value": 99,
+      "max_terms": 3,
+      "accuracy_threshold": 0.8,
+      "description": "Advanced 2-digit multiplication with multiple terms (e.g., 12*8*2)"
+    },
+    {
+      "name": "10_Addition_2digit_Advanced",
+      "operators": [
+        "+"
+      ],
+      "num_digits": 2,
+      "max_value": 99,
+      "max_terms": 4,
+      "accuracy_threshold": 0.9,
+      "description": "Advanced 2-digit addition with more terms (e.g., 45+38+12+5)"
+    },
+    {
+      "name": "11_Subtraction_2digit_Advanced",
+      "operators": [
+        "-"
+      ],
+      "num_digits": 2,
+      "max_value": 99,
+      "max_terms": 4,
+      "accuracy_threshold": 0.9,
+      "description": "Advanced 2-digit subtraction with more terms (e.g., 78-23-15-5)"
+    },
+    {
+      "name": "12_All_Ops_2digit_Master",
+      "operators": [
+        "+",
+        "-",
+        "*",
+        "/"
+      ],
+      "num_digits": 2,
+      "max_value": 99,
+      "max_terms": 4,
+      "accuracy_threshold": 0.5,
+      "description": "Master all operations with 2-digit numbers and multiple terms",
+      "use_reciprocal_for_division": true
+    }
+  ],
+  "hyperparameters": {
+    "batch_size": 64,
+    "block_size": 64,
+    "learning_rate": 0.0001,
+    "n_embd": 128,
+    "n_head": 8,
+    "n_layer": 6,
+    "dropout": 0.2,
+    "max_iters": 100000,
+    "eval_interval": 200
+  },
+  "vocab_size": 17,
+  "vocabulary": [
+    "\n",
+    "*",
+    "+",
+    "-",
+    ".",
+    "/",
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "="
+  ]
+}
