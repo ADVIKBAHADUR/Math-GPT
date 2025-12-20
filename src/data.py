@@ -279,7 +279,7 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
     })
     
     stages.append({
-        'name': '2_Multiplication_1digit - positive only',
+        'name': '2a_Multiplication_1digit - positive only',
         'operators': ['*'],
         'num_digits': 1,
         'max_value': 9,
@@ -350,7 +350,7 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'num_digits': 2,
         'max_value': 99,
         'max_terms': 2,
-        'accuracy_threshold': 0.70,
+        'accuracy_threshold': 0.80,
         'description': 'Master 2-digit division using reciprocals (e.g., 48/6 → 48*0.1667)',
         'use_reciprocal_for_division': True
     })
@@ -361,7 +361,7 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'num_digits': 2,
         'max_value': 99,
         'max_terms': 2,
-        'accuracy_threshold': 0.60,
+        'accuracy_threshold': 0.70,
         'description': 'Combine multiplication and division with 2-digit numbers (convert / to * with reciprocals)',
         'use_reciprocal_for_division': True
     })
@@ -382,7 +382,7 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'num_digits': 2,
         'max_value': 99,
         'max_terms': 3,
-        'accuracy_threshold': 0.5,
+        'accuracy_threshold': 0.7,
         'description': 'All operations mixed with 2-digit numbers - rigorous training (CRITICAL STAGE)',
         'use_reciprocal_for_division': True
     })
@@ -405,7 +405,7 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'num_digits': 2,
         'max_value': 99,
         'max_terms': 3,
-        'accuracy_threshold': 0.8,
+        'accuracy_threshold': 0.55,
         'description': 'Advanced 2-digit multiplication with multiple terms (e.g., 12*8*2)'
     })
     
@@ -435,7 +435,7 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'num_digits': 2,
         'max_value': 99,
         'max_terms': 4,
-        'accuracy_threshold': 0.5,
+        'accuracy_threshold': 0.6,
         'description': 'Master all operations with 2-digit numbers and multiple terms',
         'use_reciprocal_for_division': True  # CRITICAL: Convert division to multiplication
     })

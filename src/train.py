@@ -27,18 +27,18 @@ from data import (
 )
 
 # hyperparameters - tuned for math expressions
-batch_size = 64
+batch_size = 256
 block_size = 64
 max_iters = 100000
 eval_interval = 200  # Reduced frequency for faster training
-learning_rate = 1e-4
+learning_rate = 2e-5
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(device)
 eval_iters = 20  # Reduced from 100 for faster training
 n_embd = 128
 n_head = 8
 n_layer = 6
-dropout = 0.2
+dropout = 0.1
 
 # Performance optimizations
 FAST_MODE = True  # Skip expensive per-iteration evaluations
@@ -46,7 +46,7 @@ EVAL_SUBSET_SIZE = 30  # Evaluate on subset of expressions for speed
 DISABLE_ANSWER_MASKING = False  # Set to True if model struggles to learn
 # To resume training from a checkpoint, set path to a .pt file:
 # Example: CHECKPOINT_PATH = 'runs/models/reciprocal_curriculum_.../stage_3_2b_Simple_Negatives_completed.pt'
-CHECKPOINT_PATH = "/root/Math-GPT/runs/models/reciprocal_curriculum_lr0.0001_emb128_h8_l6_20251219_125308/stage_6_4_Subtraction_1digit_completed.pt" #None #"/root/Math-GPT/runs/models/reciprocal_curriculum_lr0.0001_emb128_h8_l6_20251215_233739/stage_8_6_Add_Sub_Mixed_2digit_best.pt" # Path to .pt file to resume training
+CHECKPOINT_PATH = "/root/Math-GPT/runs/models/reciprocal_curriculum_lr3e-05_emb128_h8_l6_20251220_065354/stage_13_9_Multiplication_2digit_Advanced_best_loss.pt" #None #"/root/Math-GPT/runs/models/reciprocal_curriculum_lr0.0001_emb128_h8_l6_20251215_233739/stage_8_6_Add_Sub_Mixed_2digit_best.pt" # Path to .pt file to resume training
 
 torch.manual_seed(1337)
 random.seed(1337)
