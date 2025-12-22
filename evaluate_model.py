@@ -188,11 +188,12 @@ def load_model(model_path):
     
     return model, encode, decode, itos, device
 
-def evaluate_expressions(model, encode, decode, itos, device, expressions, use_reciprocal=False):
+def evaluate_expressions(model, encode, decode, itos, device, expressions, use_reciprocal=False, verbose=True):
     """Evaluate model on a list of expressions"""
-    print(f"\n=== Evaluating {len(expressions)} expressions ===")
-    if use_reciprocal:
-        print("(Division will be converted to multiplication with reciprocals)")
+    if verbose:
+        print(f"\n=== Evaluating {len(expressions)} expressions ===")
+        if use_reciprocal:
+            print("(Division will be converted to multiplication with reciprocals)")
     
     correct = 0
     results = []
@@ -210,9 +211,9 @@ def evaluate_expressions(model, encode, decode, itos, device, expressions, use_r
                 generated_answer = generated.split('=')[1].strip().replace('\n', '')
                 # Compute expected answer from the converted expression (for reciprocals)
                 expected_value = float(eval(test_expr))
-                correct_answer = f"{expected_value:.1f}"
+                correct_answer = f"{expected_value:.4f}"
                 
-                # Normalize both answers for comparison
+                # Normalize both answers for comparison (use 4 decimals like training)
                 try:
                     gen_val = float(generated_answer)
                     is_correct = abs(gen_val - expected_value) < 0.01
@@ -221,9 +222,11 @@ def evaluate_expressions(model, encode, decode, itos, device, expressions, use_r
                 
                 if is_correct:
                     correct += 1
-                    print(f"✓ {expr} = {generated_answer}")
+                    if verbose:
+                        print(f"✓ {expr} = {generated_answer}")
                 else:
-                    print(f"✗ {expr} = {generated_answer} (expected: {correct_answer})")
+                    if verbose:
+                        print(f"✗ {expr} = {generated_answer} (expected: {correct_answer})")
                 
                 results.append({
                     'expression': expr,
@@ -233,21 +236,23 @@ def evaluate_expressions(model, encode, decode, itos, device, expressions, use_r
                 })
             else:
                 expected_value = float(eval(test_expr))
-                print(f"✗ {expr} = MALFORMED: {generated.strip()}")
+                if verbose:
+                    print(f"✗ {expr} = MALFORMED: {generated.strip()}")
                 results.append({
                     'expression': expr,
                     'generated': 'MALFORMED',
-                    'correct': f"{expected_value:.1f}",
+                    'correct': f"{expected_value:.4f}",
                     'is_correct': False
                 })
                 
         except Exception as e:
             try:
                 expected_value = float(eval(test_expr))
-                correct_val = f"{expected_value:.1f}"
+                correct_val = f"{expected_value:.4f}"
             except:
                 correct_val = 'N/A'
-            print(f"✗ {expr} = ERROR: {str(e)}")
+            if verbose:
+                print(f"✗ {expr} = ERROR: {str(e)}")
             results.append({
                 'expression': expr,
                 'generated': 'ERROR',
@@ -255,10 +260,228 @@ def evaluate_expressions(model, encode, decode, itos, device, expressions, use_r
                 'is_correct': False
             })
     
-    accuracy = correct / len(expressions)
-    print(f"\\nAccuracy: {correct}/{len(expressions)} = {accuracy:.3f}")
+    accuracy = correct / len(expressions) if len(expressions) > 0 else 0.0
+    if verbose:
+        print(f"\nAccuracy: {correct}/{len(expressions)} = {accuracy:.3f}")
     
     return accuracy, results
+
+def generate_comprehensive_test_set(num_digits=1, samples_per_category=100):
+    """Generate comprehensive test sets for each category"""
+    import random
+    
+    test_sets = {}
+    max_val = 9 if num_digits == 1 else 99
+    min_val = 1 if num_digits == 1 else 10
+    
+    # 1. Addition only
+    addition_exprs = []
+    for _ in range(samples_per_category):
+        a = random.randint(min_val, max_val)
+        b = random.randint(min_val, max_val)
+        addition_exprs.append(f"{a}+{b}")
+    test_sets['addition'] = addition_exprs
+    
+    # 2. Subtraction only
+    subtraction_exprs = []
+    for _ in range(samples_per_category):
+        a = random.randint(min_val, max_val)
+        b = random.randint(min_val, min(a, max_val))  # Ensure positive result
+        subtraction_exprs.append(f"{a}-{b}")
+    test_sets['subtraction'] = subtraction_exprs
+    
+    # 3. Multiplication only
+    multiplication_exprs = []
+    for _ in range(samples_per_category):
+        a = random.randint(min_val, max_val)
+        b = random.randint(min_val, max_val)
+        multiplication_exprs.append(f"{a}*{b}")
+    test_sets['multiplication'] = multiplication_exprs
+    
+    # 4. Division only - generate valid division expressions
+    division_exprs = []
+    for _ in range(samples_per_category):
+        # Generate divisor first
+        b = random.randint(max(2, min_val), max_val)
+        # Generate dividend as multiple of divisor (for cleaner division)
+        multiplier = random.randint(1, max(1, max_val // b))
+        a = b * multiplier
+        division_exprs.append(f"{a}/{b}")
+    test_sets['division'] = division_exprs
+    
+    # 5. Addition + Subtraction mixed
+    add_sub_exprs = []
+    for _ in range(samples_per_category):
+        a = random.randint(min_val, max_val)
+        b = random.randint(min_val, max_val)
+        c = random.randint(min_val, max_val)
+        op1 = random.choice(['+', '-'])
+        op2 = random.choice(['+', '-'])
+        add_sub_exprs.append(f"{a}{op1}{b}{op2}{c}")
+    test_sets['add_sub_mixed'] = add_sub_exprs
+    
+    # 6. All operators
+    all_ops_exprs = []
+    for _ in range(samples_per_category):
+        a = random.randint(min_val, max_val)
+        b = random.randint(min_val, max_val)
+        c = random.randint(max(2, min_val), max_val)  # Avoid division by zero and 1
+        op1 = random.choice(['+', '-', '*', '/'])
+        op2 = random.choice(['+', '-', '*', '/'])
+        all_ops_exprs.append(f"{a}{op1}{b}{op2}{c}")
+    test_sets['all_operators'] = all_ops_exprs
+    
+    # 7. Decimal cases (division that results in decimals)
+    decimal_exprs = []
+    attempts = 0
+    while len(decimal_exprs) < samples_per_category and attempts < samples_per_category * 3:
+        # Generate divisions that produce decimal results
+        divisors = [3, 6, 7, 9, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97]
+        b = random.choice(divisors)
+        a = random.randint(min_val, max_val)
+        if a % b != 0:  # Ensure it's not clean division
+            decimal_exprs.append(f"{a}/{b}")
+        attempts += 1
+    
+    # Fill remaining with random divisions if needed
+    while len(decimal_exprs) < samples_per_category:
+        b = random.randint(max(2, min_val), max_val)
+        a = random.randint(min_val, max_val)
+        if a % b != 0:
+            decimal_exprs.append(f"{a}/{b}")
+    
+    test_sets['decimal'] = decimal_exprs
+    
+    return test_sets
+
+
+def run_comprehensive_evaluation(model, encode, decode, itos, device, use_reciprocal=False):
+    """Run comprehensive evaluation and generate LaTeX table"""
+    print("\n" + "="*80)
+    print("COMPREHENSIVE MODEL EVALUATION")
+    print("="*80)
+    
+    # Generate test sets for 1-digit and 2-digit
+    print("\nGenerating test sets...")
+    test_sets_1digit = generate_comprehensive_test_set(num_digits=1, samples_per_category=100)
+    test_sets_2digit = generate_comprehensive_test_set(num_digits=2, samples_per_category=100)
+    
+    # Verify test sets were generated correctly
+    print("\nTest set sizes (1-digit):")
+    for key, exprs in test_sets_1digit.items():
+        print(f"  {key}: {len(exprs)} expressions")
+    print("\nTest set sizes (2-digit):")
+    for key, exprs in test_sets_2digit.items():
+        print(f"  {key}: {len(exprs)} expressions")
+    
+    # Show sample expressions
+    print("\nSample 2-digit expressions:")
+    for key in ['addition', 'multiplication', 'division']:
+        if key in test_sets_2digit:
+            print(f"  {key}: {test_sets_2digit[key][:3]}")
+    
+    results_table = {}
+    
+    categories = [
+        ('addition', 'Addition only'),
+        ('subtraction', 'Subtraction only'),
+        ('multiplication', 'Multiplication only'),
+        ('division', 'Division only'),
+        ('add_sub_mixed', 'Addition + Subtraction'),
+        ('all_operators', 'All operators'),
+        ('decimal', 'Decimal cases')
+    ]
+    
+    # Evaluate each category
+    for key, label in categories:
+        print(f"\n{'='*80}")
+        print(f"Evaluating: {label}")
+        print(f"{'='*80}")
+        
+        # 1-digit evaluation
+        print(f"\n--- 1-digit expressions ---")
+        exprs_1d = test_sets_1digit[key]
+        print(f"Testing {len(exprs_1d)} expressions. First 3: {exprs_1d[:3]}")
+        acc_1d, results_1d = evaluate_expressions(model, encode, decode, itos, device, exprs_1d, use_reciprocal, verbose=False)
+        print(f"1-digit accuracy: {acc_1d*100:.1f}% ({int(acc_1d*len(exprs_1d))}/{len(exprs_1d)})")
+        
+        # Show first few results for debugging
+        if acc_1d < 0.5:  # If accuracy is low, show examples
+            print("  Sample results:")
+            for i, (expr, result) in enumerate(zip(exprs_1d[:5], results_1d[:5])):
+                status = "✓" if result['is_correct'] else "✗"
+                print(f"    {status} {expr} -> {result['generated']} (expected: {result['correct']})")
+        
+        # 2-digit evaluation
+        print(f"\n--- 2-digit expressions ---")
+        exprs_2d = test_sets_2digit[key]
+        print(f"Testing {len(exprs_2d)} expressions. First 3: {exprs_2d[:3]}")
+        acc_2d, results_2d = evaluate_expressions(model, encode, decode, itos, device, exprs_2d, use_reciprocal, verbose=False)
+        print(f"2-digit accuracy: {acc_2d*100:.1f}% ({int(acc_2d*len(exprs_2d))}/{len(exprs_2d)})")
+        
+        # Show first few results for debugging - especially important for 2-digit
+        if acc_2d < 0.5:  # If accuracy is low, show examples
+            print("  Sample results:")
+            for i, (expr, result) in enumerate(zip(exprs_2d[:10], results_2d[:10])):
+                status = "✓" if result['is_correct'] else "✗"
+                print(f"    {status} {expr} -> {result['generated']} (expected: {result['correct']})")
+        
+        results_table[label] = {
+            '1digit': acc_1d * 100,
+            '2digit': acc_2d * 100
+        }
+    
+    # Generate LaTeX table
+    print("\n" + "="*80)
+    print("RESULTS TABLE (LaTeX format)")
+    print("="*80)
+    
+    latex_table = r"""
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{>{\raggedright}p{5cm} c c}
+\toprule
+\textbf{Category} & \textbf{1-digit Accuracy (\%)} & \textbf{2-digit Accuracy (\%)} \\
+\midrule
+"""
+    
+    for key, label in categories:
+        acc_1d = results_table[label]['1digit']
+        acc_2d = results_table[label]['2digit']
+        latex_table += f"{label} & {acc_1d:.1f} & {acc_2d:.1f} \\\\\n"
+    
+    latex_table += r"""\bottomrule
+\end{tabular}
+\caption{Testbench categories and evaluation metrics for MathGPT. Each category tested with 100 samples.}
+\label{tab:testbench}
+\end{table}
+"""
+    
+    print(latex_table)
+    
+    # Also print summary table in plain text
+    print("\n" + "="*80)
+    print("SUMMARY TABLE (Plain Text)")
+    print("="*80)
+    print(f"{'Category':<30} {'1-digit Acc (%)':<20} {'2-digit Acc (%)':<20}")
+    print("-" * 70)
+    for key, label in categories:
+        acc_1d = results_table[label]['1digit']
+        acc_2d = results_table[label]['2digit']
+        print(f"{label:<30} {acc_1d:>18.1f} {acc_2d:>18.1f}")
+    print("="*80)
+    
+    # Calculate and print overall statistics
+    avg_1digit = sum(results_table[label]['1digit'] for _, label in categories) / len(categories)
+    avg_2digit = sum(results_table[label]['2digit'] for _, label in categories) / len(categories)
+    print(f"\nOverall Average Accuracy:")
+    print(f"  1-digit: {avg_1digit:.1f}%")
+    print(f"  2-digit: {avg_2digit:.1f}%")
+    print(f"  Combined: {(avg_1digit + avg_2digit) / 2:.1f}%")
+    
+    return results_table, latex_table
+
 
 def interactive_mode(model, encode, decode, itos, device, use_reciprocal=False):
     """Interactive mode for user input"""
@@ -288,7 +511,7 @@ def interactive_mode(model, encode, decode, itos, device, use_reciprocal=False):
                 # Show expected answer for comparison
                 try:
                     expected = eval(test_expr)
-                    print(f"Expected: {user_input}={expected:.1f}\n")
+                    print(f"Expected: {user_input}={expected:.4f}\n")
                 except:
                     print()
                     
@@ -376,11 +599,12 @@ def main():
         "Complex": ["(2+3)*4", "10/(2+3)", "2*3+4*5", "100-50/2"]
     }
     
-    print("\\n=== Evaluation Options ===")
-    print("1. Test all expression sets")
-    print("2. Test specific expression set")
-    print("3. Interactive mode")
-    print("4. Custom expression list")
+    print("\n=== Evaluation Options ===")
+    print("1. Comprehensive Evaluation (Generate LaTeX table)")
+    print("2. Test all expression sets (basic)")
+    print("3. Test specific expression set")
+    print("4. Interactive mode")
+    print("5. Custom expression list")
     
     try:
         eval_choice = int(input("Select option (number): "))
@@ -388,6 +612,16 @@ def main():
         eval_choice = 1
     
     if eval_choice == 1:
+        # Comprehensive evaluation with LaTeX table
+        results_table, latex_table = run_comprehensive_evaluation(model, encode, decode, itos, device, use_reciprocal)
+        
+        # Save LaTeX table to file
+        output_file = os.path.join(os.path.dirname(selected_file), 'evaluation_results.tex')
+        with open(output_file, 'w') as f:
+            f.write(latex_table)
+        print(f"\n✓ LaTeX table saved to: {output_file}")
+        
+    elif eval_choice == 2:
         # Test all sets
         overall_correct = 0
         overall_total = 0
@@ -398,12 +632,12 @@ def main():
             overall_correct += sum(1 for r in results if r['is_correct'])
             overall_total += len(results)
         
-        print(f"\\n=== OVERALL RESULTS ===")
+        print(f"\n=== OVERALL RESULTS ===")
         print(f"Total Accuracy: {overall_correct}/{overall_total} = {overall_correct/overall_total:.3f}")
         
-    elif eval_choice == 2:
+    elif eval_choice == 3:
         # Test specific set
-        print("\\nAvailable test sets:")
+        print("\nAvailable test sets:")
         set_names = list(test_sets.keys())
         for i, name in enumerate(set_names):
             print(f"{i+1}. {name}")
@@ -416,11 +650,11 @@ def main():
         except (ValueError, IndexError):
             print("Invalid choice!")
             
-    elif eval_choice == 3:
+    elif eval_choice == 4:
         # Interactive mode
         interactive_mode(model, encode, decode, itos, device, use_reciprocal)
         
-    elif eval_choice == 4:
+    elif eval_choice == 5:
         # Custom expressions
         print("Enter expressions separated by commas:")
         custom_input = input("Expressions: ")

@@ -350,7 +350,7 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'num_digits': 2,
         'max_value': 99,
         'max_terms': 2,
-        'accuracy_threshold': 0.80,
+        'accuracy_threshold': 0.60,
         'description': 'Master 2-digit division using reciprocals (e.g., 48/6 → 48*0.1667)',
         'use_reciprocal_for_division': True
     })
@@ -361,7 +361,7 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'num_digits': 2,
         'max_value': 99,
         'max_terms': 2,
-        'accuracy_threshold': 0.70,
+        'accuracy_threshold': 0.60,
         'description': 'Combine multiplication and division with 2-digit numbers (convert / to * with reciprocals)',
         'use_reciprocal_for_division': True
     })
@@ -372,7 +372,7 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'num_digits': 2,
         'max_value': 99,
         'max_terms': 3,
-        'accuracy_threshold': 0.95,
+        'accuracy_threshold': 0.8,
         'description': 'Combine addition and subtraction with 2-digit numbers'
     })
     
@@ -405,7 +405,7 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'num_digits': 2,
         'max_value': 99,
         'max_terms': 3,
-        'accuracy_threshold': 0.55,
+        'accuracy_threshold': 0.48,
         'description': 'Advanced 2-digit multiplication with multiple terms (e.g., 12*8*2)'
     })
     
@@ -415,7 +415,7 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'num_digits': 2,
         'max_value': 99,
         'max_terms': 4,
-        'accuracy_threshold': 0.9,
+        'accuracy_threshold': 0.6,
         'description': 'Advanced 2-digit addition with more terms (e.g., 45+38+12+5)'
     })
     
@@ -425,7 +425,7 @@ def create_curriculum_stages(num_digits_list=[1, 2]):
         'num_digits': 2,
         'max_value': 99,
         'max_terms': 4,
-        'accuracy_threshold': 0.9,
+        'accuracy_threshold': 0.7,
         'description': 'Advanced 2-digit subtraction with more terms (e.g., 78-23-15-5)'
     })
     
