@@ -77,8 +77,13 @@ class Block(nn.Module):
         return x
 
 
-def generate_math_answer(model, expression, encode, decode, itos, device, max_new_tokens=50):
-    """Generate answer for a math expression until newline"""
+def generate_math_answer(model, expression, encode, decode, itos, device, max_new_tokens=50, deterministic=False):
+    """Generate answer for a math expression until newline
+    
+    Args:
+        deterministic: If True, use greedy decoding (argmax) instead of sampling.
+                      This gives consistent results but may be less creative.
+    """
     expression = expression + "="
     context = torch.tensor(encode(expression), dtype=torch.long, device=device).unsqueeze(0)
     generated = context
@@ -88,8 +93,15 @@ def generate_math_answer(model, expression, encode, decode, itos, device, max_ne
         idx_cond = generated[:, -model.block_size:]
         logits, _ = model(idx_cond)
         logits = logits[:, -1, :]
-        probs = F.softmax(logits, dim=-1)
-        next_token = torch.multinomial(probs, num_samples=1)
+        
+        if deterministic:
+            # Use argmax for deterministic results
+            next_token = torch.argmax(logits, dim=-1, keepdim=True)
+        else:
+            # Use sampling (stochastic)
+            probs = F.softmax(logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+        
         generated = torch.cat((generated, next_token), dim=1)
         if itos[next_token.item()] == '\n':
             break
@@ -188,12 +200,19 @@ def load_model(model_path):
     
     return model, encode, decode, itos, device
 
-def evaluate_expressions(model, encode, decode, itos, device, expressions, use_reciprocal=False, verbose=True):
-    """Evaluate model on a list of expressions"""
+def evaluate_expressions(model, encode, decode, itos, device, expressions, use_reciprocal=False, verbose=True, deterministic=True):
+    """Evaluate model on a list of expressions
+    
+    Args:
+        deterministic: If True, use greedy decoding for consistent results.
+                      Set to False for sampling (more varied but less consistent).
+    """
     if verbose:
         print(f"\n=== Evaluating {len(expressions)} expressions ===")
         if use_reciprocal:
             print("(Division will be converted to multiplication with reciprocals)")
+        if deterministic:
+            print("(Using deterministic/greedy decoding for consistent results)")
     
     correct = 0
     results = []
@@ -203,8 +222,12 @@ def evaluate_expressions(model, encode, decode, itos, device, expressions, use_r
             # Convert division if needed
             test_expr = convert_division_to_multiplication(expr) if (use_reciprocal and '/' in expr) else expr
             
-            # Generate answer
-            generated = generate_math_answer(model, test_expr, encode, decode, itos, device)
+            # Use the model's built-in generate_math_answer method if available (has answer masking)
+            if hasattr(model, 'generate_math_answer'):
+                generated = model.generate_math_answer(test_expr, encode, decode, itos)
+            else:
+                # Fallback to standalone function
+                generated = generate_math_answer(model, test_expr, encode, decode, itos, device, deterministic=deterministic)
             
             # Extract generated answer
             if '=' in generated:
@@ -505,7 +528,12 @@ def interactive_mode(model, encode, decode, itos, device, use_reciprocal=False):
                     test_expr = convert_division_to_multiplication(user_input)
                     print(f"  [Converted to: {test_expr}]")
                 
-                generated = generate_math_answer(model, test_expr, encode, decode, itos, device)
+                # Use the model's built-in generate_math_answer if available
+                if hasattr(model, 'generate_math_answer'):
+                    generated = model.generate_math_answer(test_expr, encode, decode, itos)
+                else:
+                    generated = generate_math_answer(model, test_expr, encode, decode, itos, device)
+                
                 print(f"AI-generated answer: {generated.strip()}")
                 
                 # Show expected answer for comparison
@@ -586,8 +614,13 @@ def main():
     model, encode, decode, itos, device = load_model(selected_file)
     
     # Check if model uses reciprocal conversion (for division stages)
-    use_reciprocal = input("\nDoes this model use reciprocal conversion for division? (y/n, default=y): ").strip().lower()
-    use_reciprocal = use_reciprocal != 'n'  # Default to yes
+    # Note: reciprocal conversion adds parentheses which may not be in vocabulary
+    use_reciprocal_input = input("\nDoes this model use reciprocal conversion for division? (y/n, default=n): ").strip().lower()
+    use_reciprocal = use_reciprocal_input == 'y'  # Default to NO since it causes issues
+    
+    if use_reciprocal:
+        print("⚠️  Warning: Reciprocal conversion requires '(' and ')' in vocabulary!")
+        print("    If the model doesn't have these characters, division tests will fail.")
     
     # Test expressions
     test_sets = {
